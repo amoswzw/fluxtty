@@ -211,7 +211,7 @@ export class WaterfallArea {
           cols: estCols,
           rows: estRows,
           new_row: opts.newRow,
-          target_row: opts.newRow ? null : targetRowIndex,
+          target_row: targetRowIndex,
         }
       });
     } catch (e) {
