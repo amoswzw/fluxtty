@@ -178,8 +178,23 @@ impl SessionManager {
         }
     }
 
-    pub fn new_row_for_pane(&mut self) -> usize {
-        self.layout.rows.len()
+    /// Insert a new empty row at `index` in the layout and shift all panes in
+    /// subsequent rows down by one, keeping row_index values consistent with
+    /// DOM order. Returns the row_index to pass to `create_pane`.
+    pub fn prepare_new_row_at(&mut self, index: usize) -> usize {
+        let insert_at = index.min(self.layout.rows.len());
+
+        // Insert an empty row placeholder so create_pane adds to it at the
+        // exact DOM position the frontend already chose.
+        self.layout.rows.insert(insert_at, RowInfo { pane_ids: vec![] });
+
+        for pane in self.panes.values_mut() {
+            if pane.row_index >= insert_at {
+                pane.row_index += 1;
+            }
+        }
+
+        insert_at
     }
 
 }

@@ -11,7 +11,8 @@ pub struct SpawnPtyArgs {
     pub cols: u16,
     pub rows: u16,
     pub new_row: bool,
-    /// When new_row is false, which existing row to add to (None = last row)
+    /// Which row to target in DOM order. When new_row is true, this is the
+    /// insertion point for the new row. Otherwise this is the row to add to.
     pub target_row: Option<usize>,
 }
 
@@ -70,7 +71,10 @@ pub async fn pty_spawn(
     let row_index = {
         let mut session = session_mgr.lock().unwrap();
         if args.new_row {
-            session.new_row_for_pane()
+            // Use the exact insertion point the frontend computed. Falls back
+            // to append if not provided.
+            let target = args.target_row.unwrap_or_else(|| session.layout().rows.len());
+            session.prepare_new_row_at(target)
         } else if let Some(target) = args.target_row {
             // Caller explicitly specified which row to add to
             target.min(session.layout().rows.len().saturating_sub(1))
