@@ -1,0 +1,75 @@
+name: CodeQL
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  schedule:
+    - cron: "18 2 * * 1"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  javascript-typescript:
+    name: CodeQL (JS/TS)
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend for analysis
+        run: |
+          npx tsc --noEmit
+          npx vite build
+
+      - name: Analyze JS/TS
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:javascript-typescript
+
+  rust:
+    name: CodeQL (Rust)
+    if: ${{ github.event.repository.private == false }}
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: rust
+
+      - name: Build Rust/Tauri backend for analysis
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Analyze Rust
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:rust
