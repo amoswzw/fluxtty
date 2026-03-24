@@ -113,7 +113,9 @@ export class TerminalPane {
       </div>
       <div class="pane-note-strip" style="display:none">
         <textarea class="pane-note-textarea" placeholder="Add a note… (Esc to save)" spellcheck="false" readonly></textarea>
-      </div>`;
+      </div>
+      <div class="term-container"></div>
+    `;
 
     // Populate user-controlled fields safely
     (el.querySelector('.pane-name') as HTMLElement).textContent = this.info.name;
@@ -122,8 +124,6 @@ export class TerminalPane {
     const cwdEl = el.querySelector('.pane-cwd') as HTMLElement;
     cwdEl.textContent = this.shortenPath(this.info.cwd);
     cwdEl.setAttribute('title', this.info.cwd);
-      <div class="term-container"></div>
-    `;
 
     const noteBtn   = el.querySelector('.pane-note-btn')     as HTMLButtonElement;
     const noteStrip = el.querySelector('.pane-note-strip')   as HTMLElement;
