@@ -90,14 +90,17 @@ export class TerminalPane {
     const el = document.createElement('div');
     el.className = 'terminal-pane';
     el.dataset.paneId = String(this.paneId);
+
+    // Build static structure with innerHTML (no user data here), then
+    // set user-controlled values via textContent/setAttribute to prevent XSS.
     el.innerHTML = `
       <div class="pane-header">
         <span class="pane-status-dot"></span>
-        <span class="pane-name">${this.info.name}</span>
-        <span class="pane-group-badge">${this.info.group !== 'default' ? this.info.group : ''}</span>
+        <span class="pane-name"></span>
+        <span class="pane-group-badge"></span>
         <span class="pane-agent-badge"></span>
         <span class="pane-spacer"></span>
-        <span class="pane-cwd" title="${this.info.cwd}">${this.shortenPath(this.info.cwd)}</span>
+        <span class="pane-cwd"></span>
         <button class="pane-note-btn" tabindex="-1" title="Note (m)">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
             <rect x="1" y="1" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
@@ -110,7 +113,15 @@ export class TerminalPane {
       </div>
       <div class="pane-note-strip" style="display:none">
         <textarea class="pane-note-textarea" placeholder="Add a note… (Esc to save)" spellcheck="false" readonly></textarea>
-      </div>
+      </div>`;
+
+    // Populate user-controlled fields safely
+    (el.querySelector('.pane-name') as HTMLElement).textContent = this.info.name;
+    (el.querySelector('.pane-group-badge') as HTMLElement).textContent =
+      this.info.group !== 'default' ? this.info.group : '';
+    const cwdEl = el.querySelector('.pane-cwd') as HTMLElement;
+    cwdEl.textContent = this.shortenPath(this.info.cwd);
+    cwdEl.setAttribute('title', this.info.cwd);
       <div class="term-container"></div>
     `;
 
