@@ -1,0 +1,47 @@
+name: Cleanup Merged Branches
+
+on:
+  pull_request_target:
+    types:
+      - closed
+
+permissions:
+  contents: write
+
+jobs:
+  delete-merged-branch:
+    if: >
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref != github.event.repository.default_branch
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Delete merged branch if it still exists
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = context.payload.pull_request.head.ref;
+            const defaultBranch = context.payload.repository.default_branch;
+
+            if (branch === defaultBranch) {
+              core.info(`Skipping default branch ${branch}`);
+              return;
+            }
+
+            try {
+              await github.rest.git.deleteRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `heads/${branch}`,
+              });
+
+              core.info(`Deleted merged branch ${branch}`);
+            } catch (error) {
+              if (error.status === 404 || error.status === 422) {
+                core.info(`Branch ${branch} was already deleted or cannot be deleted.`);
+                return;
+              }
+
+              throw error;
+            }
