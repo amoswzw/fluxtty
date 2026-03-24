@@ -1,6 +1,8 @@
 # fluxtty
 
-A multi-session developer workspace terminal for programmers running many concurrent processes — AI agent sessions, dev servers, test runners, database shells, and more — all visible and navigable without leaving the keyboard.
+vim, but for AI development.
+
+A modal terminal workspace for developers running many concurrent AI agent sessions. Navigate panes with `hjkl`, send commands in Insert mode, chat with your workspace AI in AI mode — all without touching the mouse.
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)
@@ -9,9 +11,19 @@ A multi-session developer workspace terminal for programmers running many concur
 
 ---
 
+## Why
+
+Modern AI-assisted development looks different from traditional coding. You are no longer just in one editor. You have multiple `claude` sessions running in parallel, each working on a different part of the codebase. You have dev servers, test runners, database shells, and CI watchers all running at once. Your job is to supervise them — review outputs, redirect agents, intervene when things go wrong, and dispatch new instructions.
+
+The usual terminal workflow breaks down here. Alt-tabbing between windows is disorienting at scale. tmux panes get too small to be useful. The mouse is slow.
+
+fluxtty applies vim's modal philosophy to this problem. You have a persistent view of all your terminals, and a modal input bar that knows the difference between "I want to type into a shell" (`i`), "I want to talk to my workspace AI" (`a`), and "I want to navigate" (Normal mode with `hjkl`). One window. Keyboard-first. Designed for the way AI development actually works.
+
+---
+
 ## What it is
 
-fluxtty is not a general-purpose terminal emulator. It is a workspace — designed specifically for developers who keep many shells alive simultaneously and need to navigate across them, dispatch commands, and observe output without constantly mousing around.
+fluxtty is not a general-purpose terminal emulator. It is a workspace — designed specifically for developers running many shells simultaneously who need to navigate across them, dispatch commands, and observe output without constantly mousing around.
 
 The layout is a **waterfall**: terminal rows stack vertically and fill the viewport, horizontal splits live within a row, and a modal input bar at the bottom handles navigation, shell input, and workspace AI commands.
 
@@ -28,19 +40,31 @@ The layout is a **waterfall**: terminal rows stack vertically and fill the viewp
 
 ### Modal input bar
 
-The input bar sits at the bottom of the screen, always visible. It has four modes:
+The input bar sits at the bottom of the screen, always visible. It has five modes:
 
 | Mode | Indicator | What keystrokes do |
 |---|---|---|
 | **Normal** | `NORMAL` | Navigate panes (hjkl / arrows), open commands |
 | **Insert** | `[pane-name] ❯` | Send to the active pane's shell |
+| **AI** | `AI ❯` | Free-form chat with the Workspace AI |
 | **Terminal** | `[pane-name] ❯` | Raw PTY input — for TUI apps (vim, htop, etc.) |
 | **Pane Selector** | `/` | Fuzzy-search over all open panes |
 
+**The vim analogy:**
+
+| vim | fluxtty |
+|---|---|
+| Normal mode — navigate, don't type | Normal mode — navigate panes, run workspace commands |
+| Insert mode — type into the buffer | Insert mode — type into the active shell |
+| Command mode (`:`) — editor commands | AI mode — direct the Workspace AI |
+| Visual mode — select text | Pane Selector — select which terminal to focus |
+
 **Mode transitions:**
-- `Ctrl+\` — toggle between Normal and Terminal (raw xterm)
-- `i` / `a` in Normal — enter Insert mode
-- `Escape` in Insert — return to Normal
+- `i` in Normal — enter Insert mode (type a command, `Enter` to send to shell)
+- `a` in Normal — enter AI mode (chat with Workspace AI, `Enter` to submit)
+- `Escape` in Insert or AI — return to Normal
+- `Ctrl+\` — toggle between Normal and Terminal (raw PTY for TUI apps)
+- `/` in Normal — open Pane Selector
 - Clicking a pane — enters Terminal mode on that pane
 - TUI apps (vim, htop, lazygit, etc.) are detected automatically via alternate screen sequences (`\x1b[?1049h`) and switch to Terminal mode; returning to the shell switches back to Insert
 
@@ -74,7 +98,7 @@ Rules cover editors, AI agents, package managers (npm/yarn/pnpm/bun/cargo/gradle
 
 ### Workspace AI
 
-Type `:` in Normal mode to open the workspace command prompt. If `workspace_ai.model` is set, natural language is sent to an LLM; otherwise a built-in regex intent parser handles structured commands.
+Press `a` in Normal mode to enter AI mode. Type naturally; `Enter` submits to the Workspace AI. If `workspace_ai.model` is set, input is sent to an LLM; otherwise a built-in regex intent parser handles structured commands.
 
 **Supported providers** (inferred from model name, or set explicitly via `workspace_ai.provider`):
 
@@ -248,7 +272,8 @@ persistence:
 
 | Key | Action |
 |---|---|
-| `i` / `a` | Enter Insert mode |
+| `i` | Enter Insert mode (type to shell) |
+| `a` | Enter AI mode (chat with Workspace AI) |
 | `h` / `←` | Focus previous pane in row |
 | `j` / `↓` | Focus next row |
 | `k` / `↑` | Focus previous row |
@@ -260,7 +285,7 @@ persistence:
 | `r` | Rename current session |
 | `b` | Toggle sidebar |
 | `m` | Open / edit pane note |
-| `:` | Workspace command prompt (AI / built-in) |
+| `:` | Workspace command prompt |
 | `/` | Open pane selector (fuzzy search) |
 | `G` | Scroll active pane to bottom |
 | `gg` | Scroll active pane to top |
@@ -277,6 +302,15 @@ persistence:
 | `Tab` | Agent slash completions or shell completion |
 | `Ctrl+C` | Send SIGINT |
 | `Ctrl+D` | Send EOF |
+
+### AI mode
+
+| Key | Action |
+|---|---|
+| `Escape` | Return to Normal mode |
+| `Enter` | Submit to Workspace AI |
+| `↑` / `↓` | Navigate AI command history |
+| `Tab` | Cycle built-in command completions |
 
 ---
 
@@ -303,7 +337,7 @@ fluxtty/
 │   │   ├── WaterfallArea.ts    # Row layout, height calculation, pane container
 │   │   └── TerminalPane.ts     # xterm.js instance, pane header, note strip
 │   ├── input/
-│   │   ├── InputBar.ts         # Modal input bar: all four modes
+│   │   ├── InputBar.ts         # Modal input bar: all five modes
 │   │   ├── ModeManager.ts      # Mode state machine
 │   │   ├── PaneSelector.ts     # Fuzzy pane search overlay
 │   │   └── AgentDetector.ts    # PTY output → agent type classification
