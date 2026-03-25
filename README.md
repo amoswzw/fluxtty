@@ -9,6 +9,18 @@ A modal terminal workspace for developers running many concurrent AI agent sessi
 ![Tauri](https://img.shields.io/badge/Tauri-2.x-orange)
 ![Rust](https://img.shields.io/badge/Rust-1.77%2B-orange)
 
+**[Live demo and landing page →](https://wangzewang.github.io/fluxtty/)**
+
+---
+
+## Why
+
+Modern AI-assisted development looks different from traditional coding. You are no longer just in one editor. You have multiple `claude` sessions running in parallel, each working on a different part of the codebase. You have dev servers, test runners, database shells, and CI watchers all running at once. Your job is to supervise them — review outputs, redirect agents, intervene when things go wrong, and dispatch new instructions.
+
+The usual terminal workflow breaks down here. Alt-tabbing between windows is disorienting at scale. tmux panes get too small to be useful. The mouse is slow.
+
+fluxtty applies vim's modal philosophy to this problem. You have a persistent view of all your terminals, and a modal input bar that knows the difference between "I want to type into a shell" (`i`), "I want to talk to my workspace AI" (`a`), and "I want to navigate" (Normal mode with `hjkl`). One window. Keyboard-first. Designed for the way AI development actually works.
+
 ---
 
 ## Why
