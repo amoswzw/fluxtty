@@ -8,6 +8,50 @@ import { configContext } from '../config/ConfigContext';
 import { sessionManager } from '../session/SessionManager';
 import { agentDetector } from '../input/AgentDetector';
 import { modeManager } from '../input/ModeManager';
+import { unmarkAutoNamed } from '../session/AutoNamer';
+
+// ── Module-level floating context menu (one singleton shared across panes) ──
+let _ctxMenu: HTMLElement | null = null;
+
+function getCtxMenu(): HTMLElement {
+  if (!_ctxMenu) {
+    _ctxMenu = document.createElement('div');
+    _ctxMenu.className = 'pane-ctx-menu';
+    _ctxMenu.style.display = 'none';
+    document.body.appendChild(_ctxMenu);
+    document.addEventListener('mousedown', (e) => {
+      if (!_ctxMenu?.contains(e.target as Node)) _ctxMenu!.style.display = 'none';
+    }, true);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') _ctxMenu!.style.display = 'none';
+    }, true);
+  }
+  return _ctxMenu;
+}
+
+function showCtxMenu(x: number, y: number, items: Array<{ label: string; action: () => void; danger?: boolean }>) {
+  const menu = getCtxMenu();
+  menu.innerHTML = '';
+  for (const item of items) {
+    const btn = document.createElement('button');
+    btn.className = 'ctx-item' + (item.danger ? ' ctx-danger' : '');
+    btn.textContent = item.label;
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      menu.style.display = 'none';
+      item.action();
+    });
+    menu.appendChild(btn);
+  }
+  menu.style.display = 'flex';
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+  requestAnimationFrame(() => {
+    const rect = menu.getBoundingClientRect();
+    if (rect.right > window.innerWidth)  menu.style.left = `${x - rect.width}px`;
+    if (rect.bottom > window.innerHeight) menu.style.top = `${y - rect.height}px`;
+  });
+}
 
 export class TerminalPane {
   readonly el: HTMLElement;
@@ -17,11 +61,12 @@ export class TerminalPane {
   private unlisten: UnlistenFn | null = null;
   private unlistenClose: UnlistenFn | null = null;
   private resizeObserver: ResizeObserver;
-  private onClose: (id: number) => void;
+  private onClose: (id: number, prevRow: HTMLElement | null) => void;
+  private destroyed = false;
   private info: PaneInfo;
 
 
-  constructor(info: PaneInfo, onClose: (id: number) => void) {
+  constructor(info: PaneInfo, onClose: (id: number, prevRow: HTMLElement | null) => void) {
     this.paneId = info.id;
     this.info = info;
     this.onClose = onClose;
@@ -31,10 +76,11 @@ export class TerminalPane {
     const cfg = configContext.get();
     this.term = new Terminal({
       theme: configContext.getXtermTheme(cfg),
-      fontFamily: cfg.font.normal.family + ", 'JetBrains Mono', 'Fira Code', Consolas, monospace",
+      fontFamily: `'${cfg.font.family}', 'Symbols Nerd Font Mono', 'JetBrains Mono', 'Fira Code', Consolas, monospace`,
       fontSize: cfg.font.size,
       cursorBlink: cfg.cursor.blinking,
       cursorStyle: cfg.cursor.style.toLowerCase() as 'block' | 'underline' | 'bar',
+      cursorInactiveStyle: 'none',
       scrollback: cfg.scrolling.history,
       allowProposedApi: true,
     });
@@ -48,6 +94,7 @@ export class TerminalPane {
 
     const termContainer = this.el.querySelector('.term-container') as HTMLElement;
     this.term.open(termContainer);
+    this.term.blur(); // no cursor until Terminal mode is entered via enterDirectMode()
     // fit() is intentionally NOT called here — the element is not yet in the DOM.
     // WaterfallArea calls fit() after appendChild.
 
@@ -60,14 +107,16 @@ export class TerminalPane {
     this.resizeObserver = new ResizeObserver(() => this.fit());
     this.resizeObserver.observe(termContainer);
 
-    // Subscribe to PTY data events
-    this.subscribeToEvents();
+    // subscribeToEvents() is NOT called here — WaterfallArea.spawnPane awaits
+    // it explicitly so the pty-closed listener is registered before returning.
 
     // Config changes
     configContext.onChange((cfg) => {
-      this.term.options.theme = configContext.getXtermTheme(cfg);
-      this.term.options.fontSize = cfg.font.size;
-      this.term.options.fontFamily = cfg.font.normal.family + ", 'JetBrains Mono', 'Fira Code', Consolas, monospace";
+      this.term.options.theme       = configContext.getXtermTheme(cfg);
+      this.term.options.fontSize    = cfg.font.size;
+      this.term.options.fontFamily  = `'${cfg.font.family}', 'Symbols Nerd Font Mono', 'JetBrains Mono', 'Fira Code', Consolas, monospace`;
+      this.term.options.cursorBlink = cfg.cursor.blinking;
+      this.term.options.cursorStyle = cfg.cursor.style.toLowerCase() as 'block' | 'underline' | 'bar';
       this.term.refresh(0, this.term.rows - 1);
       this.fitAddon.fit();
     });
@@ -77,12 +126,16 @@ export class TerminalPane {
       this.destroy();
     });
 
-    // Click anywhere on pane → set active and enter terminal mode.
-    // xterm.js captures focus on click regardless; sync modeManager to match.
+    // Click on pane header → set active only (no mode change).
+    // Click on terminal content → set active and enter Insert mode so the
+    // input bar is ready. Raw Terminal mode (Ctrl+\) is still entered explicitly.
     this.el.addEventListener('mousedown', (e) => {
-      if ((e.target as HTMLElement).closest('.pane-close')) return;
+      const target = e.target as HTMLElement;
+      if (target.closest('.pane-close, .pane-note-btn, .pane-note-strip')) return;
       sessionManager.setActivePane(this.paneId);
-      modeManager.enterTerminal(this.paneId);
+      if (!target.closest('.pane-header')) {
+        modeManager.enterTerminal(this.paneId);
+      }
     });
   }
 
@@ -118,7 +171,43 @@ export class TerminalPane {
     `;
 
     // Populate user-controlled fields safely
-    (el.querySelector('.pane-name') as HTMLElement).textContent = this.info.name;
+    const nameEl2 = el.querySelector('.pane-name') as HTMLElement;
+    nameEl2.textContent = this.info.name;
+    // Double-click pane name → rename
+    nameEl2.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const name = prompt('Rename session:', this.info.name);
+      if (name?.trim()) {
+        sessionManager.renamePane(this.paneId, name.trim());
+        unmarkAutoNamed(this.paneId);
+      }
+    });
+    // Right-click pane header → context menu
+    const header = el.querySelector('.pane-header') as HTMLElement;
+    header.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showCtxMenu(e.clientX, e.clientY, [
+        {
+          label: 'Enter Insert Mode',
+          action: () => { sessionManager.setActivePane(this.paneId); modeManager.enterInsert(); },
+        },
+        {
+          label: 'Split Row',
+          action: () => document.dispatchEvent(new CustomEvent('workspace-action', { detail: 'SplitHorizontal' })),
+        },
+        {
+          label: 'Rename…',
+          action: () => {
+            const name = prompt('Rename session:', this.info.name);
+            if (name?.trim()) { sessionManager.renamePane(this.paneId, name.trim()); unmarkAutoNamed(this.paneId); }
+          },
+        },
+        { label: 'Note…', action: () => this.openNote() },
+        { label: 'Close', action: () => this.destroy(), danger: true },
+      ]);
+    });
     (el.querySelector('.pane-group-badge') as HTMLElement).textContent =
       this.info.group !== 'default' ? this.info.group : '';
     const cwdEl = el.querySelector('.pane-cwd') as HTMLElement;
@@ -178,7 +267,7 @@ export class TerminalPane {
     ta.focus();
     ta.setSelectionRange(ta.value.length, ta.value.length);
     btn.classList.add('has-note');
-    this.fit();
+    // note is now an absolute overlay — no layout reflow needed
   }
 
   private closeNoteEditor(btn: HTMLButtonElement, strip: HTMLElement, ta: HTMLTextAreaElement) {
@@ -188,7 +277,6 @@ export class TerminalPane {
     strip.style.display = hasContent ? 'flex' : 'none';
     btn.classList.toggle('has-note', hasContent);
     sessionManager.setPaneNote(this.paneId, ta.value).catch(console.error);
-    this.fit();
     // Return focus to the InputBar so Normal mode keys work immediately
     document.dispatchEvent(new CustomEvent('focus-inputbar'));
   }
@@ -206,46 +294,53 @@ export class TerminalPane {
     return p.length > 30 ? '…' + p.slice(-28) : p;
   }
 
-  private async subscribeToEvents() {
-    this.unlisten = await listen<{ pane_id: number; data: string }>(
-      `pty-data-${this.paneId}`,
-      (event) => {
-        const data = event.payload.data;
-        this.term.write(data);
-        // Feed to agent detector
-        agentDetector.addOutput(this.paneId, data);
-        // Auto-switch mode based on alternate screen escape sequences.
-        // Three variants cover all curses/terminfo generations:
-        //   ?1049h/l — modern (vim, neovim, htop, btop, lazygit, ranger, fzf, less, man, tig…)
-        //   ?1047h/l — older ncurses programs
-        //   ?47h/l   — original xterm alternate screen (mutt legacy, etc.)
-        // Only act when this is the active pane.
-        if (sessionManager.getActivePaneId() === this.paneId) {
-          const entersAltScreen =
-            data.includes('\x1b[?1049h') ||
-            data.includes('\x1b[?1047h') ||
-            data.includes('\x1b[?47h');
-          const leavesAltScreen =
-            data.includes('\x1b[?1049l') ||
-            data.includes('\x1b[?1047l') ||
-            data.includes('\x1b[?47l');
-          if (entersAltScreen && modeManager.isInShellMode()) {
-            modeManager.enterTerminal(this.paneId);
-          } else if (leavesAltScreen && modeManager.isInPaneMode()) {
-            modeManager.enterInsert();
+  async subscribeToEvents() {
+    // Register both listeners in parallel so a fast-exiting PTY can't fire
+    // pty-closed before the listener is registered.
+    const [unlistenData, unlistenClose] = await Promise.all([
+      listen<{ pane_id: number; data: string }>(
+        `pty-data-${this.paneId}`,
+        (event) => {
+          const data = event.payload.data;
+          this.term.write(data);
+          // Feed to agent detector
+          agentDetector.addOutput(this.paneId, data);
+          // Auto-switch mode based on alternate screen escape sequences.
+          // Three variants cover all curses/terminfo generations:
+          //   ?1049h/l — modern (vim, neovim, htop, btop, lazygit, ranger, fzf, less, man, tig…)
+          //   ?1047h/l — older ncurses programs
+          //   ?47h/l   — original xterm alternate screen (mutt legacy, etc.)
+          // Only act when this is the active pane.
+          if (sessionManager.getActivePaneId() === this.paneId) {
+            const entersAltScreen =
+              data.includes('\x1b[?1049h') ||
+              data.includes('\x1b[?1047h') ||
+              data.includes('\x1b[?47h');
+            const leavesAltScreen =
+              data.includes('\x1b[?1049l') ||
+              data.includes('\x1b[?1047l') ||
+              data.includes('\x1b[?47l');
+            if (entersAltScreen && modeManager.isInShellMode()) {
+              modeManager.enterTerminal(this.paneId);
+            } else if (leavesAltScreen && modeManager.isInPaneMode()) {
+              modeManager.enterInsert();
+            }
           }
         }
-      }
-    );
+      ),
+      listen(`pty-closed-${this.paneId}`, () => {
+        this.term.write('\r\n\x1b[33m[Process exited]\x1b[0m\r\n');
+        setTimeout(() => this.destroy(), 300);
+      }),
+    ]);
+
+    this.unlisten = unlistenData;
+    this.unlistenClose = unlistenClose;
 
     // When agent is detected, update session info.
     // InputBar refreshes automatically via sessionManager.onChange listener.
     agentDetector.onAgentChange(this.paneId, (agent) => {
       sessionManager.setPaneAgent(this.paneId, agent);
-    });
-
-    this.unlistenClose = await listen(`pty-closed-${this.paneId}`, () => {
-      this.term.write('\r\n\x1b[33m[Process exited]\x1b[0m\r\n');
     });
   }
 
@@ -318,13 +413,16 @@ export class TerminalPane {
   }
 
   async destroy() {
+    if (this.destroyed) return;
+    this.destroyed = true;
     this.resizeObserver.disconnect();
     if (this.unlisten) this.unlisten();
     if (this.unlistenClose) this.unlistenClose();
     this.term.dispose();
+    const prevRow = this.el.parentElement as HTMLElement | null;  // capture before removal
     this.el.remove();
     await invoke('pty_kill', { paneId: this.paneId });
-    this.onClose(this.paneId);
+    this.onClose(this.paneId, prevRow);
   }
 
   get rows(): number {
@@ -348,7 +446,6 @@ export class TerminalPane {
   }
 
   // All keys in terminal mode pass through to the PTY.
-  // Scrolling is handled from Normal mode (j/k/gg/G/Ctrl+D/U/F/B).
   private handleViKey(_e: KeyboardEvent): boolean {
     return true;
   }

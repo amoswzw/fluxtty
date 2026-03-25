@@ -23,6 +23,7 @@ pub fn run() {
         .setup(move |app| {
             let handle = app.handle().clone();
             let cfg_shared = shared_config.clone();
+
             let watch_path = config::config_path();
 
             // Create parent directory so the watcher doesn't fail when
@@ -98,6 +99,7 @@ pub fn run() {
             shell_complete,
             get_env_var,
             claude_cli_query,
+            llm_complete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fluxtty");

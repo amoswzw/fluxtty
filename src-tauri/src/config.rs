@@ -38,18 +38,9 @@ pub struct PaddingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FontConfig {
-    pub size: f64,
-    pub normal: FontFaceConfig,
-    pub bold: FontFaceConfig,
-    pub italic: FontFaceConfig,
-    pub builtin_box_drawing: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct FontFaceConfig {
     pub family: String,
-    pub style: String,
+    pub size: f64,
+    pub builtin_box_drawing: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,29 +201,9 @@ impl Default for PaddingConfig {
 impl Default for FontConfig {
     fn default() -> Self {
         FontConfig {
-            size: 13.0,
-            normal: FontFaceConfig {
-                family: "JetBrains Mono".to_string(),
-                style: "Regular".to_string(),
-            },
-            bold: FontFaceConfig {
-                family: "JetBrains Mono".to_string(),
-                style: "Bold".to_string(),
-            },
-            italic: FontFaceConfig {
-                family: "JetBrains Mono".to_string(),
-                style: "Italic".to_string(),
-            },
-            builtin_box_drawing: true,
-        }
-    }
-}
-
-impl Default for FontFaceConfig {
-    fn default() -> Self {
-        FontFaceConfig {
             family: "JetBrains Mono".to_string(),
-            style: "Regular".to_string(),
+            size: 13.0,
+            builtin_box_drawing: true,
         }
     }
 }
@@ -348,7 +319,7 @@ fn default_keybindings() -> Vec<KeyBinding> {
 
 impl Default for InputConfig {
     fn default() -> Self {
-        InputConfig { live_typing: false }
+        InputConfig { live_typing: true }
     }
 }
 
@@ -401,10 +372,17 @@ impl Default for SessionDefaults {
 // Config loading
 
 pub fn config_path() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("~/.config"))
-        .join("fluxtty")
-        .join("config.yaml")
+    // Prefer XDG_CONFIG_HOME if set, otherwise use ~/.config on all platforms.
+    // This matches the documented path (~/.config/fluxtty/config.yaml) and avoids
+    // macOS's ~/Library/Application Support which dirs::config_dir() returns.
+    let base = std::env::var("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("~"))
+                .join(".config")
+        });
+    base.join("fluxtty").join("config.yaml")
 }
 
 pub fn load_config() -> Config {

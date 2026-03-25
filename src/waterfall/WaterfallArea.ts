@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { TerminalPane } from './TerminalPane';
 import { sessionManager } from '../session/SessionManager';
+import { modeManager } from '../input/ModeManager';
 import { configContext } from '../config/ConfigContext';
 import { nameFromCwd, isDefaultName, markAutoNamed, isAutoNamed } from '../session/AutoNamer';
 
@@ -174,12 +175,12 @@ export class WaterfallArea {
     return this.rowEls[rowIndex];
   }
 
-  async spawnPane(opts: { newRow: boolean; group?: string; cwd?: string; targetRow?: number }): Promise<TerminalPane | null> {
+  async spawnPane(opts: { newRow: boolean; group?: string; cwd?: string; targetRow?: number; afterPaneId?: number }): Promise<TerminalPane | null> {
     const paneId = this.nextPaneId++;
     const cfg = configContext.get();
 
-    // Inherit cwd from active pane when creating a new terminal (not explicitly overridden)
-    const inheritedCwd = opts.cwd ?? (opts.newRow ? sessionManager.getActivePane()?.cwd : undefined);
+    // Inherit cwd from active pane for both new terminals and splits (unless explicitly overridden)
+    const inheritedCwd = opts.cwd ?? sessionManager.getActivePane()?.cwd;
 
     let row: HTMLElement;
     let targetRowIndex: number;
@@ -234,16 +235,37 @@ export class WaterfallArea {
       pane_index: 0,
     };
 
-    const pane = new TerminalPane(info, (id) => this.handlePaneClose(id));
+    const pane = new TerminalPane(info, (id, prevRow) => this.handlePaneClose(id, prevRow));
     this.panes.set(paneId, pane);
-    // appendChild BEFORE fit — FitAddon needs the element in DOM to measure dimensions
-    row.appendChild(pane.el);
+    // Insert after the active pane when splitting, otherwise append to end of row.
+    // FitAddon needs the element in DOM before fit() is called.
+    const afterEl = opts.afterPaneId != null
+      ? this.panes.get(opts.afterPaneId)?.el ?? null
+      : null;
+    if (afterEl && afterEl.parentElement === row) {
+      afterEl.insertAdjacentElement('afterend', pane.el);
+    } else {
+      row.appendChild(pane.el);
+    }
+
+    // Register pty-data and pty-closed listeners now, with await, so the
+    // pty-closed handler is guaranteed to be active before we return.
+    // If the PTY exits before this resolves, the event is queued by Tauri
+    // and delivered once the listener is registered — no zombie sessions.
+    await pane.subscribeToEvents();
 
     // Fit after browser has laid out the element
     requestAnimationFrame(() => {
       pane.fit();
       if (configContext.get().waterfall.new_pane_focus) {
         sessionManager.setActivePane(paneId);
+        // Preserve Normal/Insert; Terminal/AI/selector don't apply to a fresh pane.
+        const cur = modeManager.getMode().type;
+        if (cur === 'insert') {
+          modeManager.enterInsert();
+        } else {
+          modeManager.enterNormal();
+        }
       }
       // Auto-name from cwd if still on default name
       const spawned = sessionManager.getPane(paneId);
@@ -266,7 +288,9 @@ export class WaterfallArea {
     return pane;
   }
 
-  private handlePaneClose(id: number) {
+  private handlePaneClose(id: number, prevRow: HTMLElement | null) {
+    const fallback = this.pickFallbackPane(id, prevRow);
+
     this.panes.delete(id);
     this.prevCwd.delete(id);
     // Remove empty rows
@@ -278,6 +302,55 @@ export class WaterfallArea {
       return true;
     });
     this.recalcRowHeights();
+
+    if (this.panes.size === 0) {
+      modeManager.enterNormal();
+    } else if (fallback != null) {
+      sessionManager.setActivePane(fallback);
+      this.scrollToPane(fallback);
+      // If we were in Terminal mode, transfer it to the new active pane.
+      if (modeManager.getMode().type === 'terminal') {
+        modeManager.enterTerminal(fallback);
+      }
+    }
+  }
+
+  /** Return the best pane to focus after `closedId` is removed.
+   *  Prefers a sibling in the same row, then the preceding row, then any. */
+  private pickFallbackPane(closedId: number, prevRow: HTMLElement | null): number | null {
+    if (prevRow) {
+      // Prefer sibling still in the same row
+      for (const pane of this.panes.values()) {
+        if (pane.paneId !== closedId && pane.el.parentElement === prevRow) {
+          return pane.paneId;
+        }
+      }
+      // Prefer pane in the preceding DOM row
+      const rowIdx = this.rowEls.indexOf(prevRow);
+      if (rowIdx > 0) {
+        const aboveRow = this.rowEls[rowIdx - 1];
+        for (const pane of this.panes.values()) {
+          if (pane.paneId !== closedId && pane.el.parentElement === aboveRow) {
+            return pane.paneId;
+          }
+        }
+      }
+      // Prefer pane in the following DOM row
+      const rowIdxFwd = this.rowEls.indexOf(prevRow);
+      if (rowIdxFwd >= 0 && rowIdxFwd < this.rowEls.length - 1) {
+        const belowRow = this.rowEls[rowIdxFwd + 1];
+        for (const pane of this.panes.values()) {
+          if (pane.paneId !== closedId && pane.el.parentElement === belowRow) {
+            return pane.paneId;
+          }
+        }
+      }
+    }
+    // Last resort: any remaining pane
+    for (const pane of this.panes.values()) {
+      if (pane.paneId !== closedId) return pane.paneId;
+    }
+    return null;
   }
 
   getPane(id: number): TerminalPane | undefined {
@@ -301,8 +374,26 @@ export class WaterfallArea {
   }
 
   splitCurrentRow() {
-    // Use DOM-based row detection so it's always accurate regardless of Rust metadata
     const targetRow = this.getActivePaneRowIndex();
-    this.spawnPane({ newRow: false, targetRow });
+    const afterPaneId = sessionManager.getActivePaneId() ?? undefined;
+    this.spawnPane({ newRow: false, targetRow, afterPaneId });
+  }
+
+  /** Returns panes grouped by row in DOM visual order.
+   *  Use this for navigation instead of sessionManager.getPanesByRow(),
+   *  because row_index from Rust reflects spawn order, not DOM insertion order. */
+  getPanesByDOMRow(): { id: number }[][] {
+    return this.rowEls
+      .map(rowEl =>
+        Array.from(rowEl.children)
+          .map(child => {
+            for (const [id, pane] of this.panes) {
+              if (pane.el === child) return { id };
+            }
+            return null;
+          })
+          .filter((p): p is { id: number } => p !== null)
+      )
+      .filter(row => row.length > 0);
   }
 }

@@ -77,7 +77,14 @@ export class KeybindingManager {
         break;
       case 'ClosePane': {
         const pane = waterfallArea.getActivePane();
-        if (pane) pane.destroy();
+        if (!pane) break;
+        const info = pane.getInfo();
+        if (info.status === 'running') {
+          const ok = confirm(`Close "${info.name}"? A process is still running.`);
+          if (!ok) break;
+        }
+        pane.destroy();
+        modeManager.enterNormal();
         break;
       }
       case 'ToggleSidebar':
@@ -92,26 +99,38 @@ export class KeybindingManager {
       case 'FocusNextRow':
       case 'FocusPrevRow': {
         const activeId = sessionManager.getActivePaneId();
-        const rows = sessionManager.getPanesByRow();
-        // Find the current row by searching for the active pane's id.
-        // Do NOT use activePane.row_index as an array index — getPanesByRow()
-        // returns a compacted array [0,1,2...] that no longer matches the
-        // sparse row_index values stored in PaneInfo.
+        const rows = waterfallArea.getPanesByDOMRow();
         const currentRowIdx = rows.findIndex(row => row.some(p => p.id === activeId));
         if (currentRowIdx === -1) break;
         const delta = action === 'FocusNextRow' ? 1 : -1;
         const nextRow = rows[currentRowIdx + delta];
         if (nextRow && nextRow.length > 0) {
-          sessionManager.setActivePane(nextRow[0].id);
-          waterfallArea.scrollToPane(nextRow[0].id);
+          // Pick the pane in the target row whose horizontal center is closest
+          // to the current active pane's horizontal center.
+          const activeEl = activeId != null ? waterfallArea.getPane(activeId)?.el : null;
+          let targetId = nextRow[0].id;
+          if (activeEl && nextRow.length > 1) {
+            const activeRect = activeEl.getBoundingClientRect();
+            const activeCenter = activeRect.left + activeRect.width / 2;
+            let minDist = Infinity;
+            for (const p of nextRow) {
+              const el = waterfallArea.getPane(p.id)?.el;
+              if (!el) continue;
+              const rect = el.getBoundingClientRect();
+              const dist = Math.abs((rect.left + rect.width / 2) - activeCenter);
+              if (dist < minDist) { minDist = dist; targetId = p.id; }
+            }
+          }
+          sessionManager.setActivePane(targetId);
+          waterfallArea.scrollToPane(targetId);
         }
         break;
       }
       case 'FocusNextPane':
       case 'FocusPrevPane': {
         const activeId = sessionManager.getActivePaneId();
-        const rows = sessionManager.getPanesByRow();
-        // Operate within the active row only — left/right cycles same-row panes
+        // Use DOM-ordered rows for the same reason as above
+        const rows = waterfallArea.getPanesByDOMRow();
         const rowIdx = rows.findIndex(row => row.some(p => p.id === activeId));
         if (rowIdx === -1) break;
         const rowPanes = rows[rowIdx];

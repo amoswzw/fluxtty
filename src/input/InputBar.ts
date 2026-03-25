@@ -31,6 +31,7 @@ export class InputBar {
   private autocompleteEl!: HTMLElement;
   private paneSelector: PaneSelector;
   private logExpanded = false;
+  private logHideTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Local command history — navigated by ArrowUp/Down in insert mode
   private cmdHistory: string[] = [];
@@ -121,15 +122,25 @@ export class InputBar {
       if (!modeManager.isInPaneMode()) this.inputEl.focus();
       return;
     }
+
+    // In Normal mode, keypresses must reach the input bar regardless of where
+    // focus currently is (e.g. after clicking a pane header, sidebar item, etc.).
+    // Intercept here (capture phase), refocus, and forward to handleKeyDown.
+    const mode = modeManager.getMode();
+    const active = document.activeElement;
+    const focusInTextEditor = active instanceof HTMLTextAreaElement
+      || (active instanceof HTMLInputElement && active !== this.inputEl);
+    if (mode.type === 'normal' && active !== this.inputEl && !focusInTextEditor && !this.paneSelector.isOpen()) {
+      this.inputEl.focus();
+      this.handleKeyDown(e);
+    }
   }
 
   private handleKeyDown(e: KeyboardEvent) {
     // ── Pane selector navigation ──────────────────────────────────────
     if (this.paneSelector.isOpen()) {
-      if (e.key === 'ArrowUp')   { e.preventDefault(); this.paneSelector.moveUp();           return; }
-      if (e.key === 'ArrowDown') { e.preventDefault(); this.paneSelector.moveDown();         return; }
-      if (e.key === 'j' && e.ctrlKey) { e.preventDefault(); this.paneSelector.moveDown();   return; }
-      if (e.key === 'k' && e.ctrlKey) { e.preventDefault(); this.paneSelector.moveUp();     return; }
+      if (e.key === 'ArrowUp'   || e.key === 'k') { e.preventDefault(); this.paneSelector.moveUp();   return; }
+      if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); this.paneSelector.moveDown(); return; }
       if (e.key === 'Enter')     { e.preventDefault(); this.paneSelector.confirmSelection(); return; }
       if (e.key === 'Escape')    { e.preventDefault(); this.paneSelector.cancel();           return; }
       return;
@@ -172,7 +183,7 @@ export class InputBar {
       // ── Navigation sub-state (default) ────────────────────────────
       e.preventDefault(); // block character input
 
-      if (e.key === 'i') { this.clearNormalGg(); modeManager.enterInsert(); return; }
+      if (e.key === 'i') { this.clearNormalGg(); if (sessionManager.getActivePaneId() != null) modeManager.enterInsert(); return; }
       if (e.key === 'a') { this.clearNormalGg(); modeManager.enterAI();     return; }
       if (e.key === ':')    { this.clearNormalGg(); this.enterNormalCommand(); return; }
       if (e.key === '/')    { this.clearNormalGg(); this.inputEl.value = ''; this.paneSelector.open(''); return; }
@@ -388,7 +399,7 @@ export class InputBar {
     const pane = sessionManager.getActivePane();
     const name = pane?.name ?? '—';
     this.promptEl.textContent = '';
-    this.inputEl.placeholder = `${name}  ·  i: insert  a: AI  /: find  :: cmd  m: note  hjkl: nav`;
+    this.inputEl.placeholder = `${name}  ·  i: insert  a: AI  /: find  hjkl: nav`;
   }
 
   private dispatchWorkspaceAction(action: string) {
@@ -562,7 +573,19 @@ export class InputBar {
   private async submitAI(text: string) {
     this.logLine(`❯ ${text}`, 'ai-input');
     const response = await aiHandler.handle(text);
-    if (response) this.logLine(response, 'ai-response');
+    // If the user switched away from AI mode while waiting, don't pop the log back up.
+    if (!response) return;
+    const inAI = modeManager.getMode().type === 'ai';
+    if (inAI) {
+      this.logLine(response, 'ai-response');
+    } else {
+      // Silently append to log without showing it
+      const line = document.createElement('div');
+      line.className = 'ai-log-line ai-response';
+      line.textContent = response;
+      this.logEl.appendChild(line);
+      this.logEl.scrollTop = this.logEl.scrollHeight;
+    }
   }
 
   logLine(text: string, cls = '') {
@@ -571,10 +594,22 @@ export class InputBar {
     line.textContent = text;
     this.logEl.appendChild(line);
     this.logEl.scrollTop = this.logEl.scrollHeight;
-    if (!this.logExpanded) {
-      this.logExpanded = true;
-      this.logEl.style.maxHeight = '160px';
-    }
+    this.showLog();
+  }
+
+  private showLog() {
+    if (this.logHideTimer) { clearTimeout(this.logHideTimer); this.logHideTimer = null; }
+    this.logEl.classList.add('expanded');
+    this.logExpanded = true;
+  }
+
+  private scheduleHideLog(delayMs = 4000) {
+    if (this.logHideTimer) clearTimeout(this.logHideTimer);
+    this.logHideTimer = setTimeout(() => {
+      this.logEl.classList.remove('expanded');
+      this.logExpanded = false;
+      this.logHideTimer = null;
+    }, delayMs);
   }
 
   // ── Mode rendering ────────────────────────────────────────────────
@@ -601,20 +636,24 @@ export class InputBar {
       ? 'mode-indicator mode-insert mode-insert-agent'
       : 'mode-indicator mode-insert';
 
-    const liveTyping = configContext.get().input.live_typing;
     this.inputEl.placeholder = agent !== 'none'
       ? `send to ${agent}… (/ slash cmds, Tab complete, Esc normal)`
-      : liveTyping
-        ? 'live typing — keys sent immediately (↑↓ shell history, Esc normal, Ctrl+\\ raw)'
-        : (busy
-          ? 'running… (Enter to send, Ctrl+C interrupt, Esc normal, Ctrl+\\ raw)'
-          : 'shell command… (↑↓ history, Tab complete, Esc normal, Ctrl+\\ raw)');
+      : busy
+        ? 'running… (Ctrl+C interrupt, Esc normal)'
+        : 'shell input… (Tab complete, Esc normal)';
   }
 
   private updateMode(mode: InputMode) {
+    const prevMode = this.el.dataset.mode;
     this.el.dataset.mode = mode.type;
+    document.body.dataset.mode = mode.type;
     this.inputEl.readOnly = false;
     this.hideAutocomplete();
+
+    // Auto-hide log when leaving AI mode (collapse immediately on mode switch)
+    if (prevMode === 'ai' && mode.type !== 'ai' && this.logExpanded) {
+      this.scheduleHideLog(800);
+    }
 
     // Leaving normal mode always cancels any in-progress command
     if (mode.type !== 'normal' && this.normalCommandActive) {
@@ -629,7 +668,9 @@ export class InputBar {
         this.promptEl.textContent = '';
         this.modeIndicatorEl.textContent = 'NORMAL';
         this.modeIndicatorEl.className = 'mode-indicator mode-normal';
-        this.inputEl.placeholder = `${name}  ·  i: insert  a: AI  /: find  :: cmd  m: note  hjkl: nav`;
+        this.inputEl.placeholder = pane
+          ? `${name}  ·  i: insert  a: AI  /: find  m: note  hjkl: nav`
+          : 'n: new terminal  a: AI';
         this.inputEl.readOnly = true;
         this.inputEl.focus();
         break;
@@ -643,6 +684,8 @@ export class InputBar {
           ? 'confirm plan: y to execute, n to cancel…'
           : 'ask workspace AI… (Tab: cmds, ↑↓: history, Esc: normal)';
         this.inputEl.focus();
+        // Show log if it has content
+        if (this.logEl.children.length > 0) this.showLog();
         break;
       }
       case 'insert': {

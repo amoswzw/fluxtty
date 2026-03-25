@@ -351,12 +351,18 @@ pub async fn get_env_var(name: String) -> Result<String, String> {
 /// Requires the `claude` CLI to be installed and authenticated.
 #[tauri::command]
 pub async fn claude_cli_query(prompt: String) -> Result<String, String> {
-    use std::process::Command;
+    use tokio::process::Command;
 
-    let output = Command::new("claude")
-        .args(["-p", &prompt])
+    // macOS GUI apps don't inherit the shell PATH, so `claude` may not be
+    // found with Command::new("claude"). Run via a login shell so that
+    // ~/.zprofile / ~/.profile are sourced and the user's PATH is available.
+    // Pass the prompt via an env var to avoid any shell-injection issues.
+    let output = Command::new("/bin/sh")
+        .args(["-l", "-c", "claude -p \"$FLUXTTY_PROMPT\""])
+        .env("FLUXTTY_PROMPT", &prompt)
         .output()
-        .map_err(|e| format!("Failed to spawn `claude` CLI: {}. Is it installed?", e))?;
+        .await
+        .map_err(|e| format!("Failed to spawn shell: {}. Is `claude` CLI installed?", e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -364,6 +370,218 @@ pub async fn claude_cli_query(prompt: String) -> Result<String, String> {
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+// ── LLM API proxy ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct LlmMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LlmCompleteArgs {
+    pub messages: Vec<LlmMessage>,
+    pub model: String,
+    pub provider: Option<String>,
+    pub api_key_env: Option<String>,
+    pub base_url: Option<String>,
+}
+
+/// Infer provider from model name (mirrors the JS inferProvider logic).
+fn infer_provider(model: &str) -> &'static str {
+    if model == "claude-cli" { return "claude-cli"; }
+    if model.starts_with("claude-") { return "anthropic"; }
+    if model.starts_with("gpt-") || model.starts_with("o1-") || model.starts_with("o3-")
+        || model.starts_with("o4-") || model.starts_with("chatgpt-") { return "openai"; }
+    if model.starts_with("gemini-") { return "google"; }
+    if model.starts_with("ollama/") || model.starts_with("ollama:") { return "ollama"; }
+    if let Some(prefix) = model.split_once('/').map(|(p, _)| p) {
+        // explicit provider prefix — return as static str via leak (rare path)
+        let s: &'static str = Box::leak(prefix.to_string().into_boxed_str());
+        return s;
+    }
+    "openai"
+}
+
+/// Strip "provider/" prefix from model name before sending to the API.
+fn strip_provider_prefix(model: &str) -> &str {
+    let prefixes = ["anthropic/", "openai/", "google/", "ollama/", "ollama:"];
+    for p in prefixes {
+        if let Some(rest) = model.strip_prefix(p) { return rest; }
+    }
+    model
+}
+
+#[tauri::command]
+pub async fn llm_complete(args: LlmCompleteArgs) -> Result<String, String> {
+    let provider = args.provider
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| infer_provider(&args.model))
+        .to_string();
+
+    // Resolve API key from environment variable
+    let api_key = args.api_key_env
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .and_then(|env| std::env::var(env).ok())
+        .unwrap_or_default();
+
+    let model = strip_provider_prefix(&args.model).to_string();
+    let client = reqwest::Client::new();
+
+    match provider.as_str() {
+        "anthropic" => {
+            let base = args.base_url.as_deref().unwrap_or("https://api.anthropic.com");
+            let url = format!("{}/v1/messages", base.trim_end_matches('/'));
+
+            let system: Vec<_> = args.messages.iter()
+                .filter(|m| m.role == "system")
+                .map(|m| m.content.as_str())
+                .collect();
+            let chat: Vec<_> = args.messages.iter()
+                .filter(|m| m.role != "system")
+                .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
+                .collect();
+
+            let mut body = serde_json::json!({
+                "model": model,
+                "max_tokens": 1024,
+                "messages": chat,
+            });
+            if !system.is_empty() {
+                body["system"] = serde_json::json!(system.join("\n\n"));
+            }
+
+            let res = client.post(&url)
+                .header("x-api-key", &api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("content-type", "application/json")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| format!("Anthropic request failed: {}", e))?;
+
+            if !res.status().is_success() {
+                let status = res.status().as_u16();
+                let text = res.text().await.unwrap_or_default();
+                return Err(format!("Anthropic {}: {}", status, text.trim()));
+            }
+            let data: serde_json::Value = res.json().await
+                .map_err(|e| format!("Anthropic parse error: {}", e))?;
+            Ok(data["content"][0]["text"].as_str().unwrap_or("").to_string())
+        }
+
+        "openai" => {
+            let base = args.base_url.as_deref().unwrap_or("https://api.openai.com");
+            let url = format!("{}/v1/chat/completions", base.trim_end_matches('/'));
+
+            let msgs: Vec<_> = args.messages.iter()
+                .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
+                .collect();
+            let body = serde_json::json!({ "model": model, "messages": msgs });
+
+            let res = client.post(&url)
+                .header("Authorization", format!("Bearer {}", api_key))
+                .header("content-type", "application/json")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| format!("OpenAI request failed: {}", e))?;
+
+            if !res.status().is_success() {
+                let status = res.status().as_u16();
+                let text = res.text().await.unwrap_or_default();
+                return Err(format!("OpenAI {}: {}", status, text.trim()));
+            }
+            let data: serde_json::Value = res.json().await
+                .map_err(|e| format!("OpenAI parse error: {}", e))?;
+            Ok(data["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string())
+        }
+
+        "google" => {
+            let base = args.base_url.as_deref().unwrap_or("https://generativelanguage.googleapis.com");
+            let url = format!(
+                "{}/v1beta/models/{}:generateContent?key={}",
+                base.trim_end_matches('/'), model, api_key
+            );
+
+            let system: Vec<_> = args.messages.iter()
+                .filter(|m| m.role == "system")
+                .map(|m| m.content.as_str())
+                .collect();
+            let contents: Vec<_> = args.messages.iter()
+                .filter(|m| m.role != "system")
+                .map(|m| serde_json::json!({
+                    "role": if m.role == "assistant" { "model" } else { "user" },
+                    "parts": [{ "text": m.content }],
+                }))
+                .collect();
+
+            let mut body = serde_json::json!({ "contents": contents });
+            if !system.is_empty() {
+                body["system_instruction"] = serde_json::json!({
+                    "parts": [{ "text": system.join("\n\n") }]
+                });
+            }
+
+            let res = client.post(&url)
+                .header("content-type", "application/json")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| format!("Google request failed: {}", e))?;
+
+            if !res.status().is_success() {
+                let status = res.status().as_u16();
+                let text = res.text().await.unwrap_or_default();
+                return Err(format!("Google {}: {}", status, text.trim()));
+            }
+            let data: serde_json::Value = res.json().await
+                .map_err(|e| format!("Google parse error: {}", e))?;
+            Ok(data["candidates"][0]["content"]["parts"][0]["text"]
+                .as_str().unwrap_or("").to_string())
+        }
+
+        "ollama" => {
+            let base = args.base_url.as_deref().unwrap_or("http://localhost:11434");
+            let url = format!("{}/api/chat", base.trim_end_matches('/'));
+
+            // Strip leading "ollama/" or "ollama:" if present
+            let ollama_model = model.trim_start_matches("ollama/").trim_start_matches("ollama:");
+            let msgs: Vec<_> = args.messages.iter()
+                .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
+                .collect();
+            let body = serde_json::json!({
+                "model": ollama_model,
+                "messages": msgs,
+                "stream": false,
+            });
+
+            let res = client.post(&url)
+                .header("content-type", "application/json")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| format!("Ollama request failed: {}. Is Ollama running?", e))?;
+
+            if !res.status().is_success() {
+                let status = res.status().as_u16();
+                let text = res.text().await.unwrap_or_default();
+                return Err(format!("Ollama {}: {}", status, text.trim()));
+            }
+            let data: serde_json::Value = res.json().await
+                .map_err(|e| format!("Ollama parse error: {}", e))?;
+            Ok(data["message"]["content"].as_str().unwrap_or("").to_string())
+        }
+
+        other => Err(format!(
+            "Unknown provider \"{}\". Supported: anthropic, openai, google, ollama, claude-cli",
+            other
+        )),
+    }
 }
 
 #[tauri::command]

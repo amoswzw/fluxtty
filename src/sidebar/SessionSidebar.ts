@@ -51,6 +51,7 @@ export class SessionSidebar {
                 <span class="sb-dot sb-dot-${p.status}">●</span>
                 <span class="sb-name">${p.name}</span>
                 ${p.agent_type !== 'none' ? `<span class="sb-agent">${p.agent_type}</span>` : ''}
+                <button class="sb-close" data-close-id="${p.id}" tabindex="-1" title="Close">✕</button>
               </div>
             `).join('')}
           </div>
@@ -64,6 +65,14 @@ export class SessionSidebar {
         const id = parseInt((item as HTMLElement).dataset.id || '0');
         sessionManager.setActivePane(id);
         this.waterfallArea?.scrollToPane(id);
+      });
+    });
+
+    this.el.querySelectorAll('.sb-close').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = parseInt((btn as HTMLElement).dataset.closeId || '0');
+        this.waterfallArea?.getPane(id)?.destroy();
       });
     });
   }

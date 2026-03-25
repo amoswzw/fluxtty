@@ -164,6 +164,10 @@ impl PtyManager {
 
         thread::spawn(move || {
             let mut buf = [0u8; 4096];
+            // Carry-over buffer for incomplete UTF-8 sequences split across chunks.
+            // from_utf8_lossy would replace the partial bytes with U+FFFD; instead
+            // we hold them and prepend to the next read so the sequence completes.
+            let mut incomplete: Vec<u8> = Vec::new();
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => {
@@ -171,8 +175,23 @@ impl PtyManager {
                         break;
                     }
                     Ok(n) => {
-                        let data = buf[..n].to_vec();
-                        let data_str = String::from_utf8_lossy(&data).to_string();
+                        // Prepend any leftover bytes from the previous chunk.
+                        let mut data = incomplete.clone();
+                        data.extend_from_slice(&buf[..n]);
+                        incomplete.clear();
+
+                        // Decode as UTF-8, keeping trailing incomplete sequences
+                        // for the next iteration rather than replacing with U+FFFD.
+                        let data_str = match std::str::from_utf8(&data) {
+                            Ok(s) => s.to_string(),
+                            Err(e) => {
+                                let valid_up_to = e.valid_up_to();
+                                // Save the incomplete tail for next chunk
+                                incomplete.extend_from_slice(&data[valid_up_to..]);
+                                // Decode only the valid prefix
+                                String::from_utf8_lossy(&data[..valid_up_to]).to_string()
+                            }
+                        };
 
                         // Accumulate scrollback (simple line split)
                         if let Ok(mut sb) = scrollback_clone.lock() {

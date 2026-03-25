@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { configContext } from '../config/ConfigContext';
+import { llmClient } from '../ai/llm-client';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -110,9 +111,26 @@ const ACTIONS = [
   'NewTerminal','SplitHorizontal','ClosePane','ToggleSidebar','ToggleInputMode',
   'EnterPane',
   'FocusPrevRow','FocusNextRow','FocusNextPane','FocusPrevPane',
-  'RenameCurrentSession','GroupCurrentSession','NewTerminalInGroup',
+  'RenameCurrentSession','GroupCurrentSession',
   'Quit','Copy','Paste','IncreaseFontSize','DecreaseFontSize','ResetFontSize',
+  'OpenSettings',
 ];
+
+const MOD_KEYS = ['Control', 'Shift', 'Alt'] as const;
+type ModKey = typeof MOD_KEYS[number];
+function formatMods(mods: Set<ModKey>): string | undefined {
+  const ordered = MOD_KEYS.filter(m => mods.has(m));
+  return ordered.length ? ordered.join('|') : undefined;
+}
+function kbLabel(key: string, mods: string | undefined): string {
+  const parts: string[] = [];
+  if (mods) for (const m of mods.split('|').map(s => s.trim())) {
+    if (m.toLowerCase() === 'control') parts.push('Ctrl');
+    else if (m) parts.push(m);
+  }
+  parts.push(key);
+  return parts.join('+');
+}
 
 const KNOWN_PROVIDERS = [
   '',             // auto-detect from model name
@@ -185,13 +203,6 @@ const THEME_PRESETS: Record<string, ThemeColors> = {
   },
 };
 
-const FONT_STYLES = [
-  'Regular', 'Italic',
-  'Light', 'Light Italic', 'ExtraLight', 'ExtraLight Italic', 'Thin', 'Thin Italic',
-  'Medium', 'Medium Italic', 'SemiBold', 'SemiBold Italic',
-  'Bold', 'Bold Italic', 'ExtraBold', 'ExtraBold Italic', 'Black', 'Black Italic',
-];
-
 const FALLBACK_FONTS = [
   'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Cascadia Mono',
   'Source Code Pro', 'Hack', 'Inconsolata', 'Iosevka', 'Victor Mono',
@@ -215,17 +226,6 @@ function getFontFamilies(): Promise<string[]> {
   return _fontFamiliesPromise;
 }
 
-const MOD_KEYS = ['Control', 'Shift', 'Alt'] as const;
-type ModKey = typeof MOD_KEYS[number];
-
-function parseMods(mods: string | undefined): Set<ModKey> {
-  if (!mods) return new Set();
-  return new Set(mods.split('|').map(m => m.trim()).filter(Boolean) as ModKey[]);
-}
-function formatMods(mods: Set<ModKey>): string | undefined {
-  const ordered = MOD_KEYS.filter(m => mods.has(m));
-  return ordered.length ? ordered.join('|') : undefined;
-}
 
 // ── colors custom renderer (reused inside Appearance tab) ─────────────────────
 
@@ -435,22 +435,16 @@ const SECTIONS: Section[] = [
       {
         label: 'Font',
         fields: [
-          { path: 'font.size',                label: 'Size',          type: 'number', min: 6, max: 32, step: 0.5 },
-          { path: 'font.normal.family',       label: 'Normal family', type: 'fontfamily' },
-          { path: 'font.normal.style',        label: 'Normal style',  type: 'select', opts: FONT_STYLES },
-          { path: 'font.bold.family',         label: 'Bold family',   type: 'fontfamily' },
-          { path: 'font.bold.style',          label: 'Bold style',    type: 'select', opts: FONT_STYLES },
-          { path: 'font.italic.family',       label: 'Italic family', type: 'fontfamily' },
-          { path: 'font.italic.style',        label: 'Italic style',  type: 'select', opts: FONT_STYLES },
+          { path: 'font.family', label: 'Family', type: 'fontfamily' },
+          { path: 'font.size',   label: 'Size',   type: 'number', min: 6, max: 32, step: 0.5 },
           { path: 'font.builtin_box_drawing', label: 'Builtin box drawing', type: 'checkbox' },
         ],
       },
       {
         label: 'Cursor',
         fields: [
-          { path: 'cursor.style',          label: 'Style',          type: 'select', opts: ['Block','Underline','Bar'] },
-          { path: 'cursor.blinking',       label: 'Blinking',       type: 'checkbox' },
-          { path: 'cursor.blink_interval', label: 'Blink interval', type: 'number', min: 100, max: 2000, step: 50, desc: 'ms' },
+          { path: 'cursor.style',    label: 'Style',    type: 'select', opts: ['Block','Underline','Bar'] },
+          { path: 'cursor.blinking', label: 'Blinking', type: 'checkbox' },
         ],
       },
     ],
@@ -494,43 +488,60 @@ const SECTIONS: Section[] = [
     id: 'keybindings',
     label: 'Keybindings',
     custom(cfg, el, dirty) {
-      const kbs: Array<{key: string; mods?: string; action: string}> = cfg.keybindings;
+      const kbs: Array<{ key: string; mods?: string; action: string }> = cfg.keybindings;
 
       const rebuildTable = () => {
         tableBody.innerHTML = '';
         kbs.forEach((kb, i) => {
           const tr = document.createElement('tr');
 
+          // Key recorder cell
           const keyTd = document.createElement('td');
-          const keyInp = document.createElement('input');
-          keyInp.className = 'st-input st-kb-key';
-          keyInp.value = kb.key;
-          keyInp.placeholder = 'e.g. N, Space, F1';
-          keyInp.addEventListener('change', () => { kbs[i].key = keyInp.value; dirty(); });
-          keyTd.appendChild(keyInp);
+          const recBtn = document.createElement('button');
+          recBtn.className = 'st-kb-rec';
+          recBtn.textContent = kbLabel(kb.key, kb.mods);
+
+          let recording = false;
+          let abortCtrl: AbortController | null = null;
+
+          const stopRecording = () => {
+            recording = false;
+            recBtn.classList.remove('recording');
+            abortCtrl?.abort();
+            abortCtrl = null;
+          };
+
+          recBtn.addEventListener('click', () => {
+            if (recording) { stopRecording(); return; }
+            recording = true;
+            recBtn.classList.add('recording');
+            recBtn.textContent = 'Press a key…';
+            abortCtrl = new AbortController();
+            const { signal } = abortCtrl;
+
+            window.addEventListener('keydown', (e: KeyboardEvent) => {
+              if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
+              e.preventDefault(); e.stopPropagation();
+              const mods = new Set<ModKey>();
+              if (e.ctrlKey)  mods.add('Control');
+              if (e.shiftKey) mods.add('Shift');
+              if (e.altKey)   mods.add('Alt');
+              kbs[i].key  = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+              kbs[i].mods = formatMods(mods);
+              recBtn.textContent = kbLabel(kbs[i].key, kbs[i].mods);
+              dirty();
+              stopRecording();
+            }, { signal, capture: true });
+
+            window.addEventListener('mousedown', (e: MouseEvent) => {
+              if (e.target !== recBtn) stopRecording();
+            }, { signal, capture: true });
+          });
+
+          keyTd.appendChild(recBtn);
           tr.appendChild(keyTd);
 
-          const modsTd = document.createElement('td');
-          modsTd.className = 'st-kb-mods';
-          const currentMods = parseMods(kb.mods);
-          for (const mod of MOD_KEYS) {
-            const lbl = document.createElement('label');
-            lbl.className = 'st-kb-mod-label';
-            const cb = document.createElement('input');
-            cb.type = 'checkbox';
-            cb.checked = currentMods.has(mod);
-            cb.addEventListener('change', () => {
-              if (cb.checked) currentMods.add(mod);
-              else currentMods.delete(mod);
-              kbs[i].mods = formatMods(currentMods);
-              dirty();
-            });
-            lbl.appendChild(cb);
-            lbl.appendChild(document.createTextNode(mod === 'Control' ? 'Ctrl' : mod));
-            modsTd.appendChild(lbl);
-          }
-          tr.appendChild(modsTd);
-
+          // Action selector
           const actionTd = document.createElement('td');
           const actionSel = document.createElement('select');
           actionSel.className = 'st-input';
@@ -544,6 +555,7 @@ const SECTIONS: Section[] = [
           actionTd.appendChild(actionSel);
           tr.appendChild(actionTd);
 
+          // Delete button
           const delTd = document.createElement('td');
           const delBtn = document.createElement('button');
           delBtn.className = 'st-kb-del';
@@ -563,7 +575,7 @@ const SECTIONS: Section[] = [
 
       const table = document.createElement('table');
       table.className = 'st-kb-table';
-      table.innerHTML = `<thead><tr><th>Key</th><th>Modifiers</th><th>Action</th><th></th></tr></thead>`;
+      table.innerHTML = `<thead><tr><th>Shortcut</th><th>Action</th><th></th></tr></thead>`;
       table.querySelector('thead')!.style.cssText = 'font-size: 0.85em; opacity: 0.7;';
       const tableBody = document.createElement('tbody');
       table.appendChild(tableBody);
@@ -574,7 +586,7 @@ const SECTIONS: Section[] = [
       addBtn.className = 'st-btn-add';
       addBtn.textContent = '+ Add binding';
       addBtn.addEventListener('click', () => {
-        kbs.push({ key: 'A', mods: 'Control', action: 'NewTerminal' });
+        kbs.push({ key: 'N', mods: 'Control', action: 'NewTerminal' });
         cfg.keybindings = kbs;
         dirty();
         rebuildTable();
@@ -589,39 +601,170 @@ const SECTIONS: Section[] = [
     label: 'AI',
     groups: [
       {
-        label: 'Provider',
-        fields: [
-          {
-            path: 'workspace_ai.provider',
-            label: 'Provider',
-            type: 'select',
-            opts: KNOWN_PROVIDERS,
-            desc: 'Leave blank to auto-detect from model name (claude-* → anthropic, gpt-* → openai, etc.)',
-            read: (v: string | null) => v ?? '',
-            write: (s: string) => s || null,
-          },
-          {
-            path: 'workspace_ai.model',
-            label: 'Model',
-            type: 'combobox',
-            opts: KNOWN_MODELS,
-            desc: 'Examples: claude-sonnet-4-6 · gpt-4o · gemini-2.0-flash · ollama/llama3 · claude-cli',
-          },
-          {
-            path: 'workspace_ai.api_key_env',
-            label: 'API key env var',
-            type: 'text',
-            desc: 'Name of the environment variable that holds your API key (e.g. ANTHROPIC_API_KEY)',
-          },
-          {
-            path: 'workspace_ai.base_url',
-            label: 'Base URL',
-            type: 'text',
-            desc: 'Override the API endpoint — required for Ollama (http://localhost:11434) or custom OpenAI-compatible servers',
-            read: (v: string | null) => v ?? '',
-            write: (s: string) => s || null,
-          },
-        ],
+        label: 'Model',
+        custom: (cfg, el, dirty) => {
+          const wai = cfg.workspace_ai;
+
+          function rebuild() {
+            el.innerHTML = '';
+            const model: string = wai.model ?? 'none';
+            const isNone = !model || model === 'none';
+            const isCli = model === 'claude-cli';
+            const needsKey = !isNone && !isCli;
+
+            // ── Model ────────────────────────────────────────────────────
+            const modelRow = document.createElement('div');
+            modelRow.className = 'st-field';
+            const modelLabel = document.createElement('label');
+            modelLabel.className = 'st-label';
+            modelLabel.textContent = 'Model';
+            const modelDesc = document.createElement('span');
+            modelDesc.className = 'st-desc';
+            modelDesc.textContent = 'claude-sonnet-4-6 · gpt-4o · gemini-2.0-flash · ollama/llama3 · claude-cli';
+            modelLabel.appendChild(modelDesc);
+            modelRow.appendChild(modelLabel);
+
+            const listId = 'st-dl-model';
+            const modelInp = document.createElement('input');
+            modelInp.type = 'text';
+            modelInp.className = 'st-input';
+            modelInp.value = model;
+            modelInp.setAttribute('list', listId);
+            const dl = document.createElement('datalist');
+            dl.id = listId;
+            for (const m of KNOWN_MODELS) {
+              const o = document.createElement('option');
+              o.value = m;
+              dl.appendChild(o);
+            }
+            modelInp.addEventListener('change', () => {
+              wai.model = modelInp.value.trim() || 'none';
+              dirty();
+              rebuild();
+            });
+            modelRow.appendChild(modelInp);
+            modelRow.appendChild(dl);
+            el.appendChild(modelRow);
+
+            if (isCli) {
+              // claude-cli note
+              const note = document.createElement('div');
+              note.className = 'st-field st-info-note';
+              note.textContent = 'claude-cli runs the `claude` CLI installed on your system. No API key needed — uses your existing Claude Code login.';
+              el.appendChild(note);
+            }
+
+            // ── Provider (hidden for claude-cli / none) ───────────────
+            if (!isNone && !isCli) {
+              const provRow = document.createElement('div');
+              provRow.className = 'st-field';
+              const provLabel = document.createElement('label');
+              provLabel.className = 'st-label';
+              provLabel.textContent = 'Provider';
+              const provDesc = document.createElement('span');
+              provDesc.className = 'st-desc';
+              provDesc.textContent = 'Leave blank to auto-detect (claude-* → anthropic, gpt-* → openai, etc.)';
+              provLabel.appendChild(provDesc);
+              provRow.appendChild(provLabel);
+              const provSel = document.createElement('select');
+              provSel.className = 'st-input';
+              for (const p of KNOWN_PROVIDERS.filter(p => p !== 'claude-cli')) {
+                const o = document.createElement('option');
+                o.value = p;
+                o.textContent = p || '(auto-detect)';
+                if ((wai.provider ?? '') === p) o.selected = true;
+                provSel.appendChild(o);
+              }
+              provSel.addEventListener('change', () => {
+                wai.provider = provSel.value || null;
+                dirty();
+              });
+              provRow.appendChild(provSel);
+              el.appendChild(provRow);
+            }
+
+            // ── API key env var (hidden for claude-cli / none) ────────
+            if (needsKey) {
+              const keyRow = document.createElement('div');
+              keyRow.className = 'st-field';
+              const keyLabel = document.createElement('label');
+              keyLabel.className = 'st-label';
+              keyLabel.textContent = 'API key env var';
+              const keyDesc = document.createElement('span');
+              keyDesc.className = 'st-desc';
+              keyDesc.textContent = 'Environment variable holding your API key (e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY)';
+              keyLabel.appendChild(keyDesc);
+              keyRow.appendChild(keyLabel);
+              const keyInp = document.createElement('input');
+              keyInp.type = 'text';
+              keyInp.className = 'st-input';
+              keyInp.value = wai.api_key_env ?? '';
+              keyInp.placeholder = 'ANTHROPIC_API_KEY';
+              keyInp.addEventListener('input', () => { wai.api_key_env = keyInp.value; dirty(); });
+              keyRow.appendChild(keyInp);
+              el.appendChild(keyRow);
+            }
+
+            // ── Base URL (hidden for claude-cli / none) ────────────────
+            if (!isNone && !isCli) {
+              const urlRow = document.createElement('div');
+              urlRow.className = 'st-field';
+              const urlLabel = document.createElement('label');
+              urlLabel.className = 'st-label';
+              urlLabel.textContent = 'Base URL';
+              const urlDesc = document.createElement('span');
+              urlDesc.className = 'st-desc';
+              urlDesc.textContent = 'Override API endpoint — required for Ollama (http://localhost:11434) or OpenAI-compatible servers';
+              urlLabel.appendChild(urlDesc);
+              urlRow.appendChild(urlLabel);
+              const urlInp = document.createElement('input');
+              urlInp.type = 'text';
+              urlInp.className = 'st-input';
+              urlInp.value = wai.base_url ?? '';
+              urlInp.placeholder = 'http://localhost:11434';
+              urlInp.addEventListener('input', () => { wai.base_url = urlInp.value || null; dirty(); });
+              urlRow.appendChild(urlInp);
+              el.appendChild(urlRow);
+            }
+
+            // ── Test button ────────────────────────────────────────────
+            if (!isNone) {
+              const testRow = document.createElement('div');
+              testRow.className = 'st-field';
+              testRow.appendChild(document.createElement('span')); // spacer
+              const testBtn = document.createElement('button');
+              testBtn.className = 'settings-btn';
+              testBtn.textContent = 'Test connection';
+              const testStatus = document.createElement('span');
+              testStatus.className = 'st-test-status';
+              testBtn.addEventListener('click', async () => {
+                testBtn.disabled = true;
+                testBtn.textContent = 'Testing…';
+                testStatus.textContent = '';
+                testStatus.className = 'st-test-status';
+                try {
+                  const reply = await llmClient.complete(
+                    [{ role: 'user', content: 'Reply with exactly: ok' }],
+                    cfg,
+                  );
+                  testStatus.textContent = reply ? `✓ ${reply.slice(0, 80)}` : '✓ Connected (empty response)';
+                  testStatus.className = 'st-test-status ok';
+                } catch (e) {
+                  testStatus.textContent = `✗ ${e instanceof Error ? e.message : String(e)}`;
+                  testStatus.className = 'st-test-status err';
+                } finally {
+                  testBtn.disabled = false;
+                  testBtn.textContent = 'Test connection';
+                }
+              });
+              testRow.appendChild(testBtn);
+              testRow.appendChild(testStatus);
+              el.appendChild(testRow);
+            }
+          }
+
+          rebuild();
+        },
       },
       {
         label: 'Behavior',
@@ -674,6 +817,15 @@ export class SettingsPanel {
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && this.isOpen()) { e.stopPropagation(); this.hide(); }
     }, true);
+
+    // Sync panel when config.yaml is edited externally (hot-reload → config:changed).
+    // Skip if the user has unsaved preview changes — don't clobber their edits.
+    configContext.onChange((newCfg) => {
+      if (this.isOpen() && !this.hasUnsavedPreview) {
+        this.cfg = deepClone(newCfg);
+        this.renderSection(this.activeSection);
+      }
+    });
   }
 
   private buildChrome() {
@@ -957,9 +1109,7 @@ export class SettingsPanel {
     try {
       await invoke('config_save', { cfg: this.cfg });
       this.hasUnsavedPreview = false;
-      this.saveStatus.textContent = 'Saved';
-      this.saveStatus.className = 'settings-save-status saved';
-      setTimeout(() => { this.saveStatus.textContent = ''; }, 2000);
+      this.hide();
     } catch (e: any) {
       this.saveStatus.textContent = `Error: ${e}`;
       this.saveStatus.className = 'settings-save-status error';

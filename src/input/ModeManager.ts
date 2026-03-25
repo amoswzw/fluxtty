@@ -33,7 +33,10 @@ export class ModeManager {
   }
 
   enterNormal() { this.set({ type: 'normal' }); }
-  enterInsert() { this.set({ type: 'insert' }); }
+  enterInsert() {
+    if (sessionManager.getActivePaneId() == null) return; // no pane to send to
+    this.set({ type: 'insert' });
+  }
   enterAI()     { this.set({ type: 'ai' }); }
 
   enterTerminal(paneId?: number) {

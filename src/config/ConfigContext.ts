@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 
 export interface AppConfig {
   window: { opacity: number; padding: { x: number; y: number }; decorations: string; startup_mode: string };
-  font: { size: number; normal: { family: string; style: string }; bold: { family: string; style: string }; italic: { family: string; style: string }; builtin_box_drawing: boolean };
+  font: { family: string; size: number; builtin_box_drawing: boolean };
   colors: {
     primary: { background: string; foreground: string };
     cursor: { text: string; cursor: string };
@@ -139,7 +139,7 @@ class ConfigContext {
     // --accent, --focus, --surface, --surface2, --border, --muted are
     // derived via color-mix() in CSS from --bg/--fg/--blue — no JS needed
 
-    root.style.setProperty('--font-family', `'${c.font.normal.family}', 'JetBrains Mono', 'Fira Code', Consolas, monospace`);
+    root.style.setProperty('--font-family', `'${c.font.family}', 'Symbols Nerd Font Mono', 'JetBrains Mono', 'Fira Code', Consolas, monospace`);
     root.style.setProperty('--font-size', `${c.font.size}px`);
     root.style.setProperty('--window-padding-x', `${c.window.padding.x}px`);
     root.style.setProperty('--window-padding-y', `${c.window.padding.y}px`);

@@ -21,6 +21,11 @@ export async function initApp(root: HTMLElement) {
   await configContext.init();
   await sessionManager.init();
 
+  // Preload bundled symbol font before any xterm.js terminal is created.
+  // xterm.js builds its glyph atlas on first render — if the @font-face font
+  // hasn't finished downloading by then, PUA characters fall back to U+FFFD.
+  await document.fonts.load('normal 16px "Symbols Nerd Font Mono"').catch(() => {});
+
   // Build layout
   const appEl = document.createElement('div');
   appEl.className = 'app';
@@ -93,6 +98,7 @@ export async function initApp(root: HTMLElement) {
     sidebar,
     quit: () => void getCurrentWindow().close(),
   });
+
 
   // Session count in header
   sessionManager.onChange((panes) => {
