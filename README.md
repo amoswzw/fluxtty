@@ -166,7 +166,8 @@ input:
   live_typing: false   # true: each keystroke forwarded immediately
 
 workspace_ai:
-  model: none          # none | claude-sonnet-4-6 | gpt-4o | gemini-2.0-flash | ollama/llama3 | claude-cli
+  model: none          # none | claude-sonnet-4-6 | gpt-4o | gemini-2.0-flash | ollama/llama3
+                       # claude-cli: uses your Claude Code login, no API key needed
   api_key_env: ANTHROPIC_API_KEY
   always_confirm_broadcast: true
   always_confirm_multi_step: true
