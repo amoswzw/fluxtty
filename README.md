@@ -27,7 +27,7 @@
   <a href="https://wangzewang.github.io/fluxtty/"><strong>Live demo and landing page →</strong></a>
 </p>
 
-<video src="https://github.com/user-attachments/assets/6b87c695-d5bc-4aa5-8a6f-cbd2ad973b99" controls autoplay loop muted width="100%"></video>
+<video src="https://github.com/user-attachments/assets/6b9ba19d-14c2-43d3-8e6a-6d3353674bb6" controls autoplay loop muted width="100%"></video>
 
 ---
 
