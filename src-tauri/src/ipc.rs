@@ -354,21 +354,32 @@ pub async fn claude_cli_query(prompt: String) -> Result<String, String> {
     use tokio::process::Command;
 
     // macOS GUI apps don't inherit the shell PATH, so `claude` may not be
-    // found with Command::new("claude"). Run via the user's login shell so
-    // that shell profiles (~/.zprofile, ~/.bash_profile, etc.) are sourced
-    // and the user's PATH is available.
-    // Pass the prompt via an env var to avoid any shell-injection issues.
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    // found with Command::new("claude"). Run via an interactive login shell
+    // (-i -l) so that both ~/.zprofile and ~/.zshrc are sourced, picking up
+    // paths added by nvm, homebrew, etc.
+    // stdin is /dev/null to prevent interactive prompts from hanging.
+    // The prompt is passed via an env var to avoid shell-injection issues.
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     let output = Command::new(&shell)
-        .args(["-l", "-c", "claude -p \"$FLUXTTY_PROMPT\""])
+        .args(["-i", "-l", "-c", "claude -p \"$FLUXTTY_PROMPT\""])
         .env("FLUXTTY_PROMPT", &prompt)
+        .stdin(std::process::Stdio::null())
         .output()
         .await
         .map_err(|e| format!("Failed to spawn shell: {}. Is `claude` CLI installed?", e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("claude CLI error: {}", stderr.trim()));
+        let msg = stderr.trim();
+        if msg.contains("command not found") {
+            return Err(format!(
+                "claude CLI not found in PATH.\n\
+                Run `which claude` in your terminal to find the path, \
+                then make sure it is accessible from your shell profile \
+                (~/.zprofile or ~/.zshrc)."
+            ));
+        }
+        return Err(format!("claude CLI error: {}", msg));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
