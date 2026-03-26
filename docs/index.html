@@ -5,13 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>fluxtty — Multi-session developer workspace terminal</title>
   <meta name="description" content="A keyboard-driven, multi-session terminal workspace for developers running many concurrent tasks. Built with Tauri + xterm.js." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
       --bg:      #0d1117;
       --surface: #161b22;
+      --surface2: #1c2128;
       --border:  #30363d;
+      --border2: #21262d;
       --fg:      #e6edf3;
       --muted:   #8b949e;
       --red:     #ff7b72;
@@ -21,7 +26,7 @@
       --magenta: #bc8cff;
       --cyan:    #39c5cf;
       --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
-      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
     }
 
     html { scroll-behavior: smooth; }
@@ -33,6 +38,8 @@
       font-size: 16px;
       line-height: 1.6;
       -webkit-font-smoothing: antialiased;
+      /* subtle noise grain */
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
     }
 
     a { color: var(--blue); text-decoration: none; }
@@ -43,22 +50,38 @@
       position: sticky;
       top: 0;
       z-index: 100;
-      background: rgba(13,17,23,0.92);
-      backdrop-filter: blur(12px);
-      border-bottom: 1px solid var(--border);
+      background: rgba(13,17,23,0.85);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid rgba(48,54,61,0.6);
       padding: 0 2rem;
       height: 56px;
       display: flex;
       align-items: center;
       justify-content: space-between;
+      transition: background 0.3s, border-color 0.3s;
+    }
+
+    nav.scrolled {
+      background: rgba(13,17,23,0.96);
+      border-color: var(--border);
     }
 
     .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
       font-family: var(--font-mono);
-      font-size: 1.25rem;
+      font-size: 1.2rem;
       font-weight: 700;
       color: var(--fg);
       letter-spacing: -0.5px;
+    }
+
+    .nav-logo img {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
     }
 
     .nav-logo span { color: var(--cyan); }
@@ -67,66 +90,188 @@
       display: flex;
       gap: 2rem;
       list-style: none;
-      font-size: 0.9rem;
+      font-size: 0.875rem;
+      font-weight: 500;
     }
 
-    .nav-links a { color: var(--muted); }
+    .nav-links a { color: var(--muted); transition: color 0.15s; }
     .nav-links a:hover { color: var(--fg); text-decoration: none; }
 
     .nav-cta {
       background: var(--blue);
       color: #fff !important;
-      padding: 0.4rem 1rem;
+      padding: 0.375rem 1rem;
       border-radius: 6px;
       font-weight: 600;
+      transition: background 0.15s, box-shadow 0.15s !important;
     }
 
-    .nav-cta:hover { background: #58a6ff; text-decoration: none !important; }
+    .nav-cta:hover {
+      background: #58a6ff;
+      text-decoration: none !important;
+      box-shadow: 0 0 0 3px rgba(56,139,253,0.25);
+    }
 
     /* ── Hero ── */
+    .hero-wrap {
+      position: relative;
+      overflow: hidden;
+      min-height: calc(100vh - 56px);
+      display: flex;
+      align-items: center;
+    }
+
+    /* dot-grid background */
+    .hero-wrap::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image: radial-gradient(circle, rgba(48,54,61,0.7) 1px, transparent 1px);
+      background-size: 28px 28px;
+      mask-image: radial-gradient(ellipse 90% 80% at 30% 50%, black 20%, transparent 100%);
+      -webkit-mask-image: radial-gradient(ellipse 90% 80% at 30% 50%, black 20%, transparent 100%);
+      pointer-events: none;
+    }
+
     .hero {
-      max-width: 900px;
+      max-width: 1280px;
+      width: 100%;
       margin: 0 auto;
-      padding: 6rem 2rem 4rem;
-      text-align: center;
+      padding: 3rem 3rem;
+      display: flex;
+      align-items: center;
+      gap: 4rem;
+      position: relative;
+    }
+
+    .hero-left {
+      flex: 0 0 auto;
+      width: 44%;
+      text-align: left;
+    }
+
+    .hero-right {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .hero-video {
+      position: relative;
+      width: 100%;
+      padding-bottom: 56.25%;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 24px 80px rgba(0,0,0,0.7);
+      border: 1px solid var(--border);
+    }
+
+    .hero-video iframe {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+    }
+
+
+    .hero-badge-icon {
+      width: 20px;
+      height: 20px;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to   { opacity: 1; transform: translateY(0); }
     }
 
     .hero-badge {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
       font-family: var(--font-mono);
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       background: rgba(56,139,253,0.1);
-      border: 1px solid rgba(56,139,253,0.3);
+      border: 1px solid rgba(56,139,253,0.25);
       color: var(--blue);
-      padding: 0.2rem 0.75rem;
+      padding: 0.25rem 0.75rem 0.25rem 0.4rem;
       border-radius: 999px;
       margin-bottom: 1.5rem;
       letter-spacing: 0.5px;
+      animation: fadeInUp 0.5s ease both;
+      animation-delay: 0.1s;
+      opacity: 0;
     }
 
     h1 {
       font-size: clamp(2.5rem, 6vw, 4rem);
       font-weight: 800;
       line-height: 1.1;
-      letter-spacing: -1.5px;
+      letter-spacing: -2px;
       margin-bottom: 1.25rem;
+      animation: fadeInUp 0.5s ease both;
+      animation-delay: 0.2s;
+      opacity: 0;
     }
 
-    h1 .logo { color: var(--cyan); font-family: var(--font-mono); }
+    /* gradient text */
+    h1 .logo {
+      font-family: var(--font-mono);
+      background: linear-gradient(135deg, var(--cyan) 0%, var(--blue) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
 
     .hero-sub {
-      font-size: 1.2rem;
+      font-size: 1.05rem;
       color: var(--muted);
-      max-width: 600px;
-      margin: 0 auto 2.5rem;
-      line-height: 1.7;
+      max-width: 480px;
+      margin: 0 0 1.75rem;
+      line-height: 1.75;
+      animation: fadeInUp 0.5s ease both;
+      animation-delay: 0.3s;
+      opacity: 0;
+    }
+
+    /* fake terminal prompt */
+    .hero-prompt {
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      color: var(--muted);
+      margin-bottom: 2.5rem;
+      animation: fadeInUp 0.5s ease both;
+      animation-delay: 0.4s;
+      opacity: 0;
+    }
+
+    .hero-prompt .prompt-char { color: var(--cyan); }
+    .hero-prompt .prompt-cmd  { color: var(--fg); }
+
+    .hero-prompt .cursor {
+      display: inline-block;
+      width: 8px;
+      height: 1em;
+      background: var(--cyan);
+      vertical-align: text-bottom;
+      margin-left: 2px;
+      animation: blink 1s step-end infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0; }
     }
 
     .hero-actions {
       display: flex;
-      gap: 1rem;
-      justify-content: center;
+      gap: 0.875rem;
+      justify-content: flex-start;
       flex-wrap: wrap;
+      animation: fadeInUp 0.5s ease both;
+      animation-delay: 0.5s;
+      opacity: 0;
     }
 
     .btn-primary {
@@ -139,10 +284,14 @@
       border-radius: 8px;
       font-weight: 600;
       font-size: 0.95rem;
-      transition: background 0.15s;
+      transition: background 0.15s, box-shadow 0.15s;
     }
 
-    .btn-primary:hover { background: #58a6ff; text-decoration: none; }
+    .btn-primary:hover {
+      background: #58a6ff;
+      text-decoration: none;
+      box-shadow: 0 0 0 3px rgba(56,139,253,0.3);
+    }
 
     .btn-secondary {
       display: inline-flex;
@@ -158,7 +307,11 @@
       transition: border-color 0.15s, background 0.15s;
     }
 
-    .btn-secondary:hover { border-color: var(--blue); text-decoration: none; background: #1c2230; }
+    .btn-secondary:hover {
+      border-color: var(--blue);
+      text-decoration: none;
+      background: var(--surface2);
+    }
 
     /* ── Demo ── */
     .demo-wrap {
@@ -170,10 +323,9 @@
     .demo-video {
       position: relative;
       width: 100%;
-      padding-bottom: 56.25%; /* 16:9 */
-      border-radius: 12px;
-      box-shadow: 0 32px 96px rgba(0,0,0,0.6);
-      border: 1px solid #30363d;
+      padding-bottom: 56.25%;
+      border-radius: 14px;
+      box-shadow: 0 40px 120px rgba(0,0,0,0.7), 0 0 0 1px var(--border);
       overflow: hidden;
       margin-bottom: 2rem;
     }
@@ -186,6 +338,13 @@
       border: 0;
     }
 
+    /* ── Gradient dividers ── */
+    .divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent 0%, var(--border) 20%, var(--border) 80%, transparent 100%);
+      margin: 0;
+    }
+
     /* ── The Shift ── */
     .shift-grid {
       display: grid;
@@ -194,23 +353,28 @@
       align-items: center;
       margin-bottom: 3.5rem;
     }
+
     .shift-col {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: 12px;
       padding: 1.5rem;
     }
-    .shift-col.before { border-color: #30363d; opacity: .7; }
-    .shift-col.after  { border-color: rgba(188,140,255,.4); background: rgba(188,140,255,.05); }
+
+    .shift-col.before { border-color: var(--border2); opacity: .65; }
+    .shift-col.after  { border-color: rgba(188,140,255,.35); background: rgba(188,140,255,.04); }
+
     .shift-col-label {
       font-family: var(--font-mono);
-      font-size: 0.7rem;
-      letter-spacing: 1px;
+      font-size: 0.68rem;
+      letter-spacing: 1.5px;
       text-transform: uppercase;
       margin-bottom: 1rem;
     }
+
     .shift-col.before .shift-col-label { color: var(--muted); }
     .shift-col.after  .shift-col-label { color: var(--magenta); }
+
     .shift-item {
       display: flex;
       align-items: flex-start;
@@ -219,54 +383,69 @@
       font-size: 0.9rem;
       line-height: 1.5;
     }
+
     .shift-item:last-child { margin-bottom: 0; }
-    .shift-dot { flex-shrink: 0; margin-top: 4px; font-size: 0.6rem; }
-    .shift-col.before .shift-dot { color: var(--muted); }
-    .shift-col.after  .shift-dot { color: var(--magenta); }
+    .shift-dot { flex-shrink: 0; margin-top: 5px; width: 5px; height: 5px; border-radius: 50%; display: inline-block; }
+    .shift-col.before .shift-dot { background: var(--muted); }
+    .shift-col.after  .shift-dot { background: var(--magenta); }
+
     .shift-arrow {
-      font-size: 1.5rem;
+      font-size: 1.25rem;
       color: var(--muted);
       text-align: center;
     }
+
     /* vim analogy table */
     .vim-table {
       width: 100%;
       border-collapse: collapse;
       font-size: 0.9rem;
       margin-top: 0.5rem;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
     }
+
     .vim-table th {
       text-align: left;
-      padding: 0.5rem 1rem;
+      padding: 0.6rem 1rem;
       font-family: var(--font-mono);
-      font-size: 0.75rem;
-      letter-spacing: .5px;
+      font-size: 0.7rem;
+      letter-spacing: .75px;
       text-transform: uppercase;
       color: var(--muted);
+      background: var(--surface2);
       border-bottom: 1px solid var(--border);
     }
+
     .vim-table td {
-      padding: 0.75rem 1rem;
-      border-bottom: 1px solid #21262d;
+      padding: 0.875rem 1rem;
+      border-bottom: 1px solid var(--border2);
       vertical-align: top;
+      background: var(--surface);
     }
+
     .vim-table tr:last-child td { border-bottom: none; }
-    .vim-table td:first-child { color: var(--muted); font-family: var(--font-mono); font-size: 0.85rem; width: 22%; }
+    .vim-table td:first-child { color: var(--muted); font-family: var(--font-mono); font-size: 0.82rem; width: 22%; white-space: nowrap; }
     .vim-table td:nth-child(2) { width: 39%; }
     .vim-table td:nth-child(3) { width: 39%; }
+
     .vim-badge {
       display: inline-block;
       font-family: var(--font-mono);
-      font-size: 0.7rem;
+      font-size: 0.68rem;
       font-weight: 700;
-      padding: 1px 6px;
-      border-radius: 3px;
+      padding: 2px 7px;
+      border-radius: 4px;
       margin-right: 4px;
+      letter-spacing: 0.3px;
     }
+
     .vim-badge.normal   { background: rgba(227,179,65,.15); color: var(--yellow); border: 1px solid rgba(227,179,65,.3); }
-    .vim-badge.insert   { background: rgba(63,185,80,.1);  color: var(--green);  border: 1px solid rgba(63,185,80,.25); }
+    .vim-badge.insert   { background: rgba(63,185,80,.1);   color: var(--green);  border: 1px solid rgba(63,185,80,.25); }
     .vim-badge.ai       { background: rgba(188,140,255,.12); color: var(--magenta); border: 1px solid rgba(188,140,255,.3); }
-    .vim-badge.terminal { background: rgba(63,185,80,.1); color: var(--green); border: 1px solid rgba(63,185,80,.25); }
+    .vim-badge.terminal { background: rgba(63,185,80,.1);   color: var(--green);  border: 1px solid rgba(63,185,80,.25); }
+
     @media (max-width: 640px) {
       .shift-grid { grid-template-columns: 1fr; }
       .shift-arrow { display: none; }
@@ -281,9 +460,9 @@
 
     .section-label {
       font-family: var(--font-mono);
-      font-size: 0.75rem;
+      font-size: 0.7rem;
       color: var(--cyan);
-      letter-spacing: 1px;
+      letter-spacing: 1.5px;
       text-transform: uppercase;
       margin-bottom: 0.75rem;
     }
@@ -291,7 +470,7 @@
     h2 {
       font-size: clamp(1.6rem, 4vw, 2.4rem);
       font-weight: 700;
-      letter-spacing: -0.5px;
+      letter-spacing: -0.75px;
       margin-bottom: 1rem;
     }
 
@@ -300,6 +479,7 @@
       font-size: 1.05rem;
       max-width: 560px;
       margin-bottom: 3rem;
+      line-height: 1.7;
     }
 
     /* ── Feature grid ── */
@@ -312,82 +492,101 @@
     .feature-card {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: 12px;
       padding: 1.5rem;
-      transition: border-color 0.15s;
+      transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
     }
 
-    .feature-card:hover { border-color: rgba(56,139,253,0.4); }
+    .feature-card:hover {
+      border-color: rgba(56,139,253,0.35);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    }
 
     .feature-icon {
-      font-size: 1.5rem;
-      margin-bottom: 0.75rem;
+      width: 36px;
+      height: 36px;
+      margin-bottom: 0.875rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
     .feature-card h3 {
-      font-size: 1rem;
+      font-size: 0.975rem;
       font-weight: 700;
       margin-bottom: 0.5rem;
+      letter-spacing: -0.2px;
     }
 
     .feature-card p {
-      font-size: 0.9rem;
+      font-size: 0.875rem;
       color: var(--muted);
-      line-height: 1.6;
+      line-height: 1.65;
     }
 
-    /* ── Modes table ── */
+    /* ── Modes ── */
     .modes-grid {
       display: grid;
-      gap: 1rem;
+      gap: 0.875rem;
     }
 
     .mode-row {
       display: grid;
       grid-template-columns: 120px 1fr;
-      gap: 1rem;
+      gap: 1.25rem;
       align-items: start;
-      padding: 1rem;
+      padding: 1.25rem 1.5rem;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: 10px;
+      border-left-width: 3px;
+      transition: border-color 0.15s;
     }
+
+    .mode-row.m-normal   { border-left-color: var(--yellow); }
+    .mode-row.m-insert   { border-left-color: var(--green); }
+    .mode-row.m-ai       { border-left-color: var(--magenta); }
+    .mode-row.m-terminal { border-left-color: #56d364; }
+    .mode-row.m-find     { border-left-color: var(--cyan); }
 
     .mode-badge {
       font-family: var(--font-mono);
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       font-weight: 700;
       padding: 0.25rem 0.6rem;
-      border-radius: 4px;
+      border-radius: 5px;
       text-align: center;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.75px;
+      white-space: nowrap;
     }
 
-    .mode-badge.normal   { background: rgba(227,179,65,0.15);  color: var(--yellow); border: 1px solid rgba(227,179,65,0.3); }
-    .mode-badge.insert   { background: rgba(63,185,80,0.15);   color: var(--green);  border: 1px solid rgba(63,185,80,0.3); }
-    .mode-badge.terminal { background: rgba(188,140,255,0.15); color: var(--magenta);border: 1px solid rgba(188,140,255,0.3); }
-    .mode-badge.find     { background: rgba(57,197,207,0.15);  color: var(--cyan);   border: 1px solid rgba(57,197,207,0.3); }
+    .mode-badge.normal   { background: rgba(227,179,65,0.15);  color: var(--yellow);  border: 1px solid rgba(227,179,65,0.3); }
+    .mode-badge.insert   { background: rgba(63,185,80,0.15);   color: var(--green);   border: 1px solid rgba(63,185,80,0.3); }
+    .mode-badge.ai       { background: rgba(188,140,255,0.15); color: var(--magenta); border: 1px solid rgba(188,140,255,0.3); }
+    .mode-badge.terminal { background: rgba(86,211,100,0.12);  color: #56d364;        border: 1px solid rgba(86,211,100,0.3); }
+    .mode-badge.find     { background: rgba(57,197,207,0.15);  color: var(--cyan);    border: 1px solid rgba(57,197,207,0.3); }
 
-    .mode-row p { font-size: 0.9rem; color: var(--muted); }
+    .mode-row p { font-size: 0.875rem; color: var(--muted); line-height: 1.7; }
     .mode-row strong { color: var(--fg); }
 
     /* ── Code block ── */
     .code-block {
-      background: #0d1117;
+      background: #080c10;
       border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 1.5rem;
+      border-radius: 10px;
+      padding: 1.75rem;
       overflow-x: auto;
     }
 
     .code-block pre {
       font-family: var(--font-mono);
-      font-size: 0.85rem;
-      line-height: 1.7;
+      font-size: 0.84rem;
+      line-height: 1.75;
       color: var(--fg);
     }
 
-    .code-block .cm  { color: var(--muted); }
+    .code-block .cm  { color: var(--muted); font-style: italic; }
     .code-block .kw  { color: var(--magenta); }
     .code-block .st  { color: var(--green); }
     .code-block .nu  { color: var(--cyan); }
@@ -397,19 +596,23 @@
     .stack-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-      gap: 1rem;
+      gap: 0.875rem;
     }
 
     .stack-item {
       display: flex;
       align-items: center;
       gap: 0.75rem;
-      padding: 0.875rem 1rem;
+      padding: 0.875rem 1.125rem;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 8px;
-      font-size: 0.9rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: border-color 0.15s, background 0.15s;
     }
+
+    .stack-item:hover { background: var(--surface2); border-color: rgba(56,139,253,0.3); }
 
     .stack-dot {
       width: 8px;
@@ -422,63 +625,217 @@
     .kb-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-      gap: 0.5rem;
+      gap: 0.4rem;
+    }
+
+    .kb-section-label {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: var(--muted);
+      letter-spacing: 0.75px;
+      margin-bottom: 0.875rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--border2);
     }
 
     .kb-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0.6rem 0.875rem;
+      padding: 0.55rem 0.875rem;
       border-radius: 6px;
       background: var(--surface);
-      border: 1px solid var(--border);
-      font-size: 0.875rem;
+      border: 1px solid var(--border2);
+      font-size: 0.85rem;
+      transition: border-color 0.15s;
     }
+
+    .kb-row:hover { border-color: var(--border); }
 
     .kb-keys {
       display: flex;
-      gap: 0.25rem;
+      gap: 0.2rem;
+      align-items: center;
     }
 
     kbd {
       font-family: var(--font-mono);
-      font-size: 0.8rem;
-      background: #1c2128;
+      font-size: 0.75rem;
+      background: var(--surface2);
       border: 1px solid var(--border);
       border-bottom-width: 2px;
       border-radius: 4px;
-      padding: 0.1rem 0.5rem;
+      padding: 0.1rem 0.45rem;
       color: var(--fg);
+      white-space: nowrap;
     }
 
     .kb-desc { color: var(--muted); }
 
-    /* ── Divider ── */
-    hr { border: none; border-top: 1px solid var(--border); margin: 0; }
+    /* ── Download section ── */
+    .download-section {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 4rem 2rem;
+      text-align: center;
+    }
+
+    .download-section h2 {
+      margin-bottom: 0.5rem;
+    }
+
+    .download-section .section-sub {
+      margin: 0 auto 2.5rem;
+    }
+
+    .download-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.875rem;
+      justify-content: center;
+    }
+
+    .download-pill {
+      display: flex;
+      align-items: center;
+      gap: 0.625rem;
+      padding: 0.75rem 1.25rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--fg);
+      transition: border-color 0.15s, background 0.15s, transform 0.15s;
+      text-decoration: none;
+    }
+
+    .download-pill:hover {
+      border-color: var(--cyan);
+      background: var(--surface2);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+
+    .download-pill-platform {
+      font-size: 1.1rem;
+    }
+
+    .download-pill-info {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 1px;
+    }
+
+    .download-pill-name { font-weight: 600; line-height: 1.2; }
+    .download-pill-ext  { font-size: 0.72rem; color: var(--muted); font-family: var(--font-mono); }
 
     /* ── Footer ── */
     footer {
       text-align: center;
-      padding: 3rem 2rem;
+      padding: 3rem 2rem 3.5rem;
       color: var(--muted);
-      font-size: 0.875rem;
+      font-size: 0.85rem;
+      border-top: 1px solid var(--border2);
     }
 
-    footer a { color: var(--muted); }
-    footer a:hover { color: var(--fg); }
+    footer a { color: var(--muted); transition: color 0.15s; }
+    footer a:hover { color: var(--fg); text-decoration: none; }
+
+    .footer-inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .footer-logo {
+      font-family: var(--font-mono);
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--fg);
+    }
+
+    .footer-logo span { color: var(--cyan); }
+
+    .footer-links {
+      display: flex;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .footer-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      justify-content: center;
+      margin-top: 0.25rem;
+    }
+
+    .footer-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.2rem 0.625rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+
+    .footer-badge span { color: var(--cyan); }
+
+    .star-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 0.875rem;
+      background: rgba(227,179,65,0.1);
+      border: 1px solid rgba(227,179,65,0.3);
+      border-radius: 6px;
+      color: var(--yellow) !important;
+      font-size: 0.8rem;
+      font-weight: 600;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    .star-btn:hover {
+      background: rgba(227,179,65,0.18);
+      border-color: rgba(227,179,65,0.5);
+      text-decoration: none !important;
+    }
+
+    @media (max-width: 900px) {
+      .hero {
+        flex-direction: column;
+        padding: 3rem 2rem;
+        gap: 2.5rem;
+      }
+      .hero-left {
+        width: 100%;
+        text-align: center;
+      }
+.hero-sub { margin: 0 auto 1.5rem; }
+      .hero-actions { justify-content: center; }
+      .hero-right { width: 100%; }
+    }
 
     @media (max-width: 640px) {
       .nav-links { display: none; }
       .mode-row { grid-template-columns: 1fr; }
+      .kb-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
 
 <!-- Nav -->
-<nav>
-  <span class="nav-logo">flux<span>tty</span></span>
+<nav id="main-nav">
+  <span class="nav-logo"><img src="icon.png" alt="" />flux<span>tty</span></span>
   <ul class="nav-links">
     <li><a href="#features">Features</a></li>
     <li><a href="#modes">Modes</a></li>
@@ -489,37 +846,41 @@
 </nav>
 
 <!-- Hero -->
-<div class="hero">
-  <div class="hero-badge">vim-modal &nbsp;·&nbsp; multi-agent &nbsp;·&nbsp; AI-native</div>
-  <h1>
-    vim,&nbsp; but for<br />
-    <span class="logo">AI&nbsp;development</span>
-  </h1>
-  <p class="hero-sub">
-    You don't write code anymore — you direct agents.
-    fluxtty is a keyboard-driven terminal workspace built for supervising many AI agents at once,
-    with the same modal efficiency that made vim indispensable.
-  </p>
-  <div class="hero-actions">
-    <a href="https://github.com/wangzewang/fluxtty" class="btn-primary">
-      <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-      View on GitHub
-    </a>
-    <a href="#the-shift" class="btn-secondary">The idea</a>
+<div class="hero-wrap">
+  <div class="hero">
+    <div class="hero-left">
+      <div class="hero-badge"><img src="icon.png" alt="" class="hero-badge-icon" />vim-modal &nbsp;·&nbsp; multi-agent &nbsp;·&nbsp; AI-native</div>
+      <h1>
+        A vim-modal terminal<br />
+        <span class="logo">for AI development</span>
+      </h1>
+      <p class="hero-sub">
+        You don't write code anymore — you direct agents.
+        fluxtty is a keyboard-driven terminal workspace built for supervising many AI agents at once,
+        with the same modal efficiency that made vim indispensable.
+      </p>
+      <p class="hero-prompt">
+        <span class="prompt-char">$</span>&nbsp;<span class="prompt-cmd">fluxtty</span><span class="cursor"></span>
+      </p>
+      <div class="hero-actions">
+        <a href="https://github.com/wangzewang/fluxtty" class="btn-primary">
+          <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          View on GitHub
+        </a>
+        <a href="#the-shift" class="btn-secondary">The idea</a>
+      </div>
+    </div>
+    <div class="hero-right">
+      <div class="hero-video">
+        <iframe src="https://player.vimeo.com/video/1177293764?autoplay=1&muted=1&loop=1"
+          allow="autoplay; fullscreen; picture-in-picture" allowfullscreen>
+        </iframe>
+      </div>
+    </div>
   </div>
 </div>
 
-<!-- Demo -->
-<div class="demo-wrap">
-
-  <div class="demo-video">
-    <iframe src="https://player.vimeo.com/video/1177293764?autoplay=1&muted=1&loop=1"
-      allow="autoplay; fullscreen; picture-in-picture" allowfullscreen>
-    </iframe>
-  </div>
-
-
-<hr />
+<div class="divider"></div>
 
 <!-- The Shift -->
 <section id="the-shift">
@@ -533,18 +894,18 @@
   <div class="shift-grid">
     <div class="shift-col before">
       <div class="shift-col-label">Before</div>
-      <div class="shift-item"><span class="shift-dot">●</span><span>Open editor, write code manually</span></div>
-      <div class="shift-item"><span class="shift-dot">●</span><span>One terminal for occasional commands</span></div>
-      <div class="shift-item"><span class="shift-dot">●</span><span>Run tests, check output, fix code yourself</span></div>
-      <div class="shift-item"><span class="shift-dot">●</span><span>Context-switch between editor and terminal</span></div>
+      <div class="shift-item"><span class="shift-dot"></span><span>Open editor, write code manually</span></div>
+      <div class="shift-item"><span class="shift-dot"></span><span>One terminal for occasional commands</span></div>
+      <div class="shift-item"><span class="shift-dot"></span><span>Run tests, check output, fix code yourself</span></div>
+      <div class="shift-item"><span class="shift-dot"></span><span>Context-switch between editor and terminal</span></div>
     </div>
     <div class="shift-arrow">→</div>
     <div class="shift-col after">
       <div class="shift-col-label">Now</div>
-      <div class="shift-item"><span class="shift-dot">●</span><span>Agents write code — you review and direct</span></div>
-      <div class="shift-item"><span class="shift-dot">●</span><span>5–10 sessions open: agents, servers, shells</span></div>
-      <div class="shift-item"><span class="shift-dot">●</span><span>Monitor outputs, send instructions, course-correct</span></div>
-      <div class="shift-item"><span class="shift-dot">●</span><span>The terminal <em>is</em> the workspace</span></div>
+      <div class="shift-item"><span class="shift-dot"></span><span>Agents write code — you review and direct</span></div>
+      <div class="shift-item"><span class="shift-dot"></span><span>5–10 sessions open: agents, servers, shells</span></div>
+      <div class="shift-item"><span class="shift-dot"></span><span>Monitor outputs, send instructions, course-correct</span></div>
+      <div class="shift-item"><span class="shift-dot"></span><span>The terminal <em>is</em> the workspace</span></div>
     </div>
   </div>
 
@@ -587,7 +948,7 @@
   </table>
 </section>
 
-<hr />
+<div class="divider"></div>
 
 <!-- Features -->
 <section id="features">
@@ -597,32 +958,60 @@
     Every feature answers the same question: how do I stay in control when ten processes are running at once?
   </p>
   <div class="features">
+
     <div class="feature-card">
-      <div class="feature-icon">&#9638;</div>
+      <div class="feature-icon">
+        <!-- columns/grid icon -->
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#39c5cf" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="18" rx="1"/>
+        </svg>
+      </div>
       <h3>Waterfall layout</h3>
       <p>
         Sessions stack in rows you can see simultaneously. When agents are busy,
         their output is right there — no alt-tabbing, no hidden windows.
       </p>
     </div>
+
     <div class="feature-card">
-      <div class="feature-icon">&#9000;</div>
+      <div class="feature-icon">
+        <!-- keyboard icon -->
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#3fb950" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="6" width="20" height="12" rx="2"/>
+          <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h12M10 14h.01M14 14h.01"/>
+        </svg>
+      </div>
       <h3>Vim-modal input</h3>
       <p>
         Navigate ten panes without touching the mouse. <code>hjkl</code> moves focus,
         <code>i</code> sends a command, <code>a</code> talks to workspace AI, <code>/</code> jumps to any session.
       </p>
     </div>
+
     <div class="feature-card">
-      <div class="feature-icon">&#127760;</div>
+      <div class="feature-icon">
+        <!-- eye/scan icon -->
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#bc8cff" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+      </div>
       <h3>Agent detection</h3>
       <p>
         Automatically detects claude, aider, codex running in a pane. Shows an agent badge,
         enables Tab completion for that agent's slash commands, and keeps Insert mode clean.
       </p>
     </div>
+
     <div class="feature-card">
-      <div class="feature-icon">&#128736;</div>
+      <div class="feature-icon">
+        <!-- sparkles icon -->
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#388bfd" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2l1.5 4.5L18 8l-4.5 1.5L12 14l-1.5-4.5L6 8l4.5-1.5L12 2z"/>
+          <path d="M19 14l.75 2.25L22 17l-2.25.75L19 20l-.75-2.25L16 17l2.25-.75L19 14z"/>
+          <path d="M5 17l.5 1.5L7 19l-1.5.5L5 21l-.5-1.5L3 19l1.5-.5L5 17z"/>
+        </svg>
+      </div>
       <h3>Workspace AI dispatch</h3>
       <p>
         Press <code>a</code> and ask in plain language. Run commands across sessions,
@@ -630,8 +1019,15 @@
         Supports Claude, GPT, Gemini, Ollama, or no model at all.
       </p>
     </div>
+
     <div class="feature-card">
-      <div class="feature-icon">&#128196;</div>
+      <div class="feature-icon">
+        <!-- tag icon -->
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#e3b341" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/>
+          <circle cx="7" cy="7" r="1.5" fill="#e3b341"/>
+        </svg>
+      </div>
       <h3>Auto-naming</h3>
       <p>
         Pane names update from cwd on spawn, then change to reflect what's running —
@@ -639,42 +1035,77 @@
         You always know what each session is without reading the output.
       </p>
     </div>
+
     <div class="feature-card">
-      <div class="feature-icon">&#9881;</div>
+      <div class="feature-icon">
+        <!-- sliders/settings icon -->
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#39c5cf" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="4" y1="6" x2="20" y2="6"/>
+          <line x1="4" y1="12" x2="20" y2="12"/>
+          <line x1="4" y1="18" x2="20" y2="18"/>
+          <circle cx="8" cy="6" r="2" fill="#0d1117"/>
+          <circle cx="16" cy="12" r="2" fill="#0d1117"/>
+          <circle cx="10" cy="18" r="2" fill="#0d1117"/>
+        </svg>
+      </div>
       <h3>YAML config, hot-reload</h3>
       <p>
-        <code>~/.config/fluxtty/config.yaml</code> — Alacritty-style.
-        Font, colors, keybindings, AI provider. Changes apply instantly, no restart.
+        <code>~/.config/fluxtty/config.yaml</code> — font, colors, keybindings, AI provider.
+        Changes apply instantly, no restart.
       </p>
     </div>
+
     <div class="feature-card">
-      <div class="feature-icon">&#128065;</div>
+      <div class="feature-icon">
+        <!-- panel-left icon -->
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#3fb950" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <line x1="9" y1="3" x2="9" y2="21"/>
+        </svg>
+      </div>
       <h3>Session sidebar</h3>
       <p>
         Grouped session tree with running/idle/error indicators.
         <code>b</code> to toggle. Click to jump. Never lose track of which agent is which.
       </p>
     </div>
+
     <div class="feature-card">
-      <div class="feature-icon">&#128161;</div>
+      <div class="feature-icon">
+        <!-- terminal/chevron icon -->
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#bc8cff" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="4 17 10 11 4 5"/>
+          <line x1="12" y1="19" x2="20" y2="19"/>
+        </svg>
+      </div>
       <h3>Shell &amp; agent completion</h3>
       <p>
         Tab in Insert mode completes file paths and commands.
         In an agent session, Tab completes that agent's native slash commands — <code>/compact</code>, <code>/diff</code>, <code>/undo</code>.
       </p>
     </div>
+
     <div class="feature-card">
-      <div class="feature-icon">&#128203;</div>
+      <div class="feature-icon">
+        <!-- file-text icon -->
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#e3b341" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="8" y1="13" x2="16" y2="13"/>
+          <line x1="8" y1="17" x2="12" y2="17"/>
+        </svg>
+      </div>
       <h3>Pane notes</h3>
       <p>
         Press <code>m</code> to annotate any pane — what this agent is working on,
         which branch, what to check next. Shown in the pane header at a glance.
       </p>
     </div>
+
   </div>
 </section>
 
-<hr />
+<div class="divider"></div>
 
 <!-- Modes -->
 <section id="modes">
@@ -685,7 +1116,7 @@
     and each mode does exactly one thing well.
   </p>
   <div class="modes-grid">
-    <div class="mode-row">
+    <div class="mode-row m-normal">
       <span class="mode-badge normal">NORMAL</span>
       <p>
         <strong>The default. Navigate without disturbing any agent.</strong>
@@ -695,7 +1126,7 @@
         Nothing you press here reaches any shell.
       </p>
     </div>
-    <div class="mode-row">
+    <div class="mode-row m-insert">
       <span class="mode-badge insert">INSERT</span>
       <p>
         <strong>Press <kbd>i</kbd> — type into the active shell.</strong>
@@ -704,8 +1135,8 @@
         <kbd>Esc</kbd> returns to Normal instantly.
       </p>
     </div>
-    <div class="mode-row">
-      <span class="mode-badge ai" style="background:rgba(188,140,255,.18);color:#bc8cff;border:1px solid rgba(188,140,255,.45)">AI</span>
+    <div class="mode-row m-ai">
+      <span class="mode-badge ai">AI</span>
       <p>
         <strong>Press <kbd>a</kbd> — talk to the workspace AI.</strong>
         Dispatch commands to sessions, manage the workspace in natural language.
@@ -714,7 +1145,7 @@
         <kbd>Esc</kbd> returns to Normal.
       </p>
     </div>
-    <div class="mode-row">
+    <div class="mode-row m-terminal">
       <span class="mode-badge terminal">TERMINAL</span>
       <p>
         <strong>Press <kbd>Ctrl+\</kbd> — xterm.js owns the keyboard completely.</strong>
@@ -723,7 +1154,7 @@
         <kbd>Ctrl+\</kbd> returns to Normal.
       </p>
     </div>
-    <div class="mode-row">
+    <div class="mode-row m-find">
       <span class="mode-badge find">FIND</span>
       <p>
         <strong>Press <kbd>/</kbd> — fuzzy search all sessions.</strong>
@@ -735,12 +1166,12 @@
   </div>
 </section>
 
-<hr />
+<div class="divider"></div>
 
 <!-- Config -->
 <section id="config">
   <div class="section-label">Configuration</div>
-  <h2>YAML config, Alacritty-style</h2>
+  <h2>YAML config, hot-reload</h2>
   <p class="section-sub">
     All behavior is configurable. Edit <code>~/.config/fluxtty/config.yaml</code>
     and changes apply immediately — no restart needed.
@@ -775,7 +1206,7 @@
   </div>
 </section>
 
-<hr />
+<div class="divider"></div>
 
 <!-- AI Providers -->
 <section>
@@ -795,7 +1226,7 @@
   </div>
 </section>
 
-<hr />
+<div class="divider"></div>
 
 <!-- Keybindings -->
 <section id="keybindings">
@@ -803,10 +1234,8 @@
   <h2>Key reference</h2>
   <p class="section-sub">All bindings are configurable in <code>config.yaml</code>.</p>
 
-  <p style="color:var(--muted);font-size:0.85rem;margin-bottom:1.25rem;font-family:var(--font-mono)">
-    Normal mode navigation
-  </p>
-  <div class="kb-grid" style="margin-bottom:2rem">
+  <p class="kb-section-label" style="margin-bottom:1.25rem">Normal mode navigation</p>
+  <div class="kb-grid" style="margin-bottom:2.5rem">
     <div class="kb-row"><span class="kb-desc">Next / prev row</span><div class="kb-keys"><kbd>j</kbd><kbd>k</kbd></div></div>
     <div class="kb-row"><span class="kb-desc">Next / prev pane</span><div class="kb-keys"><kbd>h</kbd><kbd>l</kbd></div></div>
     <div class="kb-row"><span class="kb-desc">New terminal</span><div class="kb-keys"><kbd>n</kbd></div></div>
@@ -824,9 +1253,7 @@
     <div class="kb-row"><span class="kb-desc">Half page down / up</span><div class="kb-keys"><kbd>Ctrl+D</kbd> / <kbd>Ctrl+U</kbd></div></div>
   </div>
 
-  <p style="color:var(--muted);font-size:0.85rem;margin-bottom:1.25rem;font-family:var(--font-mono)">
-    Global keybindings
-  </p>
+  <p class="kb-section-label" style="margin-bottom:1.25rem">Global keybindings</p>
   <div class="kb-grid">
     <div class="kb-row"><span class="kb-desc">New terminal</span><div class="kb-keys"><kbd>Ctrl</kbd><kbd>N</kbd></div></div>
     <div class="kb-row"><span class="kb-desc">Split horizontal</span><div class="kb-keys"><kbd>Ctrl</kbd><kbd>H</kbd></div></div>
@@ -839,14 +1266,88 @@
   </div>
 </section>
 
+<div class="divider"></div>
+
+<!-- Download -->
+<div class="download-section">
+  <div class="section-label" style="text-align:center">Install</div>
+  <h2>Download fluxtty</h2>
+  <p class="section-sub" style="text-align:center">
+    Pre-built binaries for macOS, Linux, and Windows.
+    <a href="https://github.com/wangzewang/fluxtty/releases">See all releases →</a>
+  </p>
+  <div class="download-pills">
+    <a href="https://github.com/wangzewang/fluxtty/releases/download/v0.1.1/fluxtty_0.1.0_aarch64.dmg" class="download-pill">
+      <span class="download-pill-platform"></span>
+      <div class="download-pill-info">
+        <span class="download-pill-name">macOS Apple Silicon</span>
+        <span class="download-pill-ext">.dmg · aarch64</span>
+      </div>
+    </a>
+    <a href="https://github.com/wangzewang/fluxtty/releases/download/v0.1.1/fluxtty_0.1.0_x64.dmg" class="download-pill">
+      <span class="download-pill-platform"></span>
+      <div class="download-pill-info">
+        <span class="download-pill-name">macOS Intel</span>
+        <span class="download-pill-ext">.dmg · x64</span>
+      </div>
+    </a>
+    <a href="https://github.com/wangzewang/fluxtty/releases/download/v0.1.1/fluxtty_0.1.0_amd64.deb" class="download-pill">
+      <span class="download-pill-platform">🐧</span>
+      <div class="download-pill-info">
+        <span class="download-pill-name">Linux</span>
+        <span class="download-pill-ext">.deb · amd64</span>
+      </div>
+    </a>
+    <a href="https://github.com/wangzewang/fluxtty/releases/download/v0.1.1/fluxtty_0.1.0_amd64.AppImage" class="download-pill">
+      <span class="download-pill-platform">🐧</span>
+      <div class="download-pill-info">
+        <span class="download-pill-name">Linux AppImage</span>
+        <span class="download-pill-ext">.AppImage · amd64</span>
+      </div>
+    </a>
+    <a href="https://github.com/wangzewang/fluxtty/releases/download/v0.1.1/fluxtty_0.1.0_x64-setup.exe" class="download-pill">
+      <span class="download-pill-platform">🪟</span>
+      <div class="download-pill-info">
+        <span class="download-pill-name">Windows</span>
+        <span class="download-pill-ext">.exe · x64</span>
+      </div>
+    </a>
+  </div>
+</div>
+
 <!-- Footer -->
 <footer>
-  <p>
-    <a href="https://github.com/wangzewang/fluxtty">fluxtty</a> &mdash;
-    MIT License &mdash;
-    Built with Tauri + xterm.js
-  </p>
+  <div class="footer-inner">
+    <span class="footer-logo">flux<span>tty</span></span>
+    <div class="footer-links">
+      <a href="https://github.com/wangzewang/fluxtty">GitHub</a>
+      <a href="https://github.com/wangzewang/fluxtty/releases">Releases</a>
+      <a href="https://github.com/wangzewang/fluxtty/blob/main/CONTRIBUTING.md">Contributing</a>
+      <a href="https://github.com/wangzewang/fluxtty/blob/main/LICENSE">MIT License</a>
+    </div>
+    <div>
+      <a href="https://github.com/wangzewang/fluxtty" class="star-btn">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>
+        Star on GitHub
+      </a>
+    </div>
+    <div class="footer-badges">
+      <span class="footer-badge">Tauri <span>2.x</span></span>
+      <span class="footer-badge">xterm.js <span>5</span></span>
+      <span class="footer-badge">Rust <span>+</span> TypeScript</span>
+      <span class="footer-badge">portable-pty</span>
+    </div>
+    <p style="margin-top:0.25rem;font-size:0.78rem">Built with Tauri + xterm.js &mdash; designed for the way AI development actually works.</p>
+  </div>
 </footer>
+
+<script>
+  // nav scroll state
+  const nav = document.getElementById('main-nav');
+  window.addEventListener('scroll', () => {
+    nav.classList.toggle('scrolled', window.scrollY > 10);
+  }, { passive: true });
+</script>
 
 </body>
 </html>
