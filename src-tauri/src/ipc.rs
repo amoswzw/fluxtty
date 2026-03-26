@@ -354,10 +354,12 @@ pub async fn claude_cli_query(prompt: String) -> Result<String, String> {
     use tokio::process::Command;
 
     // macOS GUI apps don't inherit the shell PATH, so `claude` may not be
-    // found with Command::new("claude"). Run via a login shell so that
-    // ~/.zprofile / ~/.profile are sourced and the user's PATH is available.
+    // found with Command::new("claude"). Run via the user's login shell so
+    // that shell profiles (~/.zprofile, ~/.bash_profile, etc.) are sourced
+    // and the user's PATH is available.
     // Pass the prompt via an env var to avoid any shell-injection issues.
-    let output = Command::new("/bin/sh")
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    let output = Command::new(&shell)
         .args(["-l", "-c", "claude -p \"$FLUXTTY_PROMPT\""])
         .env("FLUXTTY_PROMPT", &prompt)
         .output()
