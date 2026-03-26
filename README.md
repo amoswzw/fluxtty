@@ -221,6 +221,13 @@ Built with: [Tauri 2](https://tauri.app/) · [xterm.js 5](https://xtermjs.org/) 
 
 ---
 
+## Inspiration
+
+The waterfall layout idea — terminals stacking vertically, each filling the viewport as you scroll — was shamelessly stolen from [`infinite-scroll`](https://github.com/gaojude/infinite-scroll). I prefer the word "inspired."
+
+---
+
+
 ## License
 
 MIT
