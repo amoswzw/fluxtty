@@ -18,6 +18,54 @@ A modal terminal workspace for developers running many concurrent AI agent sessi
 
 ---
 
+## Installation
+
+### Download
+
+| Platform | Download |
+|---|---|
+| macOS (Apple Silicon) | [fluxtty_0.1.0_aarch64.dmg](https://github.com/wangzewang/fluxtty/releases/download/v0.1.1/fluxtty_0.1.0_aarch64.dmg) |
+| macOS (Intel) | [fluxtty_0.1.0_x64.dmg](https://github.com/wangzewang/fluxtty/releases/download/v0.1.1/fluxtty_0.1.0_x64.dmg) |
+| Linux (deb) | [fluxtty_0.1.0_amd64.deb](https://github.com/wangzewang/fluxtty/releases/download/v0.1.1/fluxtty_0.1.0_amd64.deb) |
+| Linux (rpm) | [fluxtty-0.1.0-1.x86_64.rpm](https://github.com/wangzewang/fluxtty/releases/download/v0.1.1/fluxtty-0.1.0-1.x86_64.rpm) |
+| Linux (AppImage) | [fluxtty_0.1.0_amd64.AppImage](https://github.com/wangzewang/fluxtty/releases/download/v0.1.1/fluxtty_0.1.0_amd64.AppImage) |
+| Windows | [fluxtty_0.1.0_x64-setup.exe](https://github.com/wangzewang/fluxtty/releases/download/v0.1.1/fluxtty_0.1.0_x64-setup.exe) |
+
+### macOS — first launch
+
+macOS will block the app on first open because it is not notarized. Run this once after installing:
+
+```bash
+sudo xattr -cr /Applications/fluxtty.app
+```
+
+Then open normally from Finder or Spotlight.
+
+### Build from source
+
+#### Prerequisites
+
+- [Rust](https://rustup.rs/) 1.77+
+- [Node.js](https://nodejs.org/) 18+
+- [Tauri v2 prerequisites](https://tauri.app/start/prerequisites/) for your platform (WebKit on Linux, Xcode CLI on macOS)
+
+```bash
+git clone https://github.com/wangzewang/fluxtty
+cd fluxtty
+npm install
+npm run tauri build
+```
+
+Built app is in `src-tauri/target/release/bundle/`.
+
+### Development
+
+```bash
+npm run tauri dev
+```
+
+---
+
 ## Why
 
 Modern AI-assisted development looks different from traditional coding. You are no longer just in one editor. You have multiple `claude` sessions running in parallel, each working on a different part of the codebase. You have dev servers, test runners, database shells, and CI watchers all running at once. Your job is to supervise them — review outputs, redirect agents, intervene when things go wrong, and dispatch new instructions.
@@ -25,14 +73,6 @@ Modern AI-assisted development looks different from traditional coding. You are 
 The usual terminal workflow breaks down here. Alt-tabbing between windows is disorienting at scale. tmux panes get too small to be useful. The mouse is slow.
 
 fluxtty applies vim's modal philosophy to this problem. You have a persistent view of all your terminals, and a modal input bar that knows the difference between "I want to type into a shell" (`i`), "I want to talk to my workspace AI" (`a`), and "I want to navigate" (Normal mode with `hjkl`). One window. Keyboard-first. Designed for the way AI development actually works.
-
----
-
-## What it is
-
-fluxtty is not a general-purpose terminal emulator. It is a workspace — designed specifically for developers running many shells simultaneously who need to navigate across them, dispatch commands, and observe output without constantly mousing around.
-
-The layout is a **waterfall**: terminal rows stack vertically and fill the viewport, horizontal splits live within a row, and a modal input bar at the bottom handles navigation, shell input, and workspace AI commands.
 
 ---
 
@@ -65,19 +105,6 @@ The input bar sits at the bottom of the screen, always visible. It has five mode
 | Insert mode — type into the buffer | Insert mode — type into the active shell |
 | Command mode (`:`) — editor commands | AI mode — direct the Workspace AI |
 | Visual mode — select text | Pane Selector — select which terminal to focus |
-
-**Mode transitions:**
-- `i` in Normal — enter Insert mode (type a command, `Enter` to send to shell)
-- `a` in Normal — enter AI mode (chat with Workspace AI, `Enter` to submit)
-- `Escape` in Insert or AI — return to Normal
-- `Ctrl+\` — toggle between Normal and Terminal (raw PTY for TUI apps)
-- `/` in Normal — open Pane Selector
-- Clicking a pane — enters Terminal mode on that pane
-- TUI apps (vim, htop, lazygit, etc.) are detected automatically via alternate screen sequences (`\x1b[?1049h`) and switch to Terminal mode; returning to the shell switches back to Insert
-
-**Insert mode** has two sub-modes, controlled by `input.live_typing` in config:
-- `live_typing: true` (default) — every keystroke forwarded to the PTY immediately, including arrows, Tab, `Ctrl+C/D`
-- `live_typing: false` — buffered: type a full command, `Enter` to send
 
 ### Session identity
 
@@ -161,33 +188,6 @@ When an agent is detected, the input bar shows that agent's native slash command
 - **AI** — provider, model, API key env var, base URL, confirmation behaviour
 
 Changes are written to `~/.config/fluxtty/config.yaml` and applied live without restart.
-
----
-
-## Installation
-
-### Prerequisites
-
-- [Rust](https://rustup.rs/) 1.77+
-- [Node.js](https://nodejs.org/) 18+
-- [Tauri v2 prerequisites](https://tauri.app/start/prerequisites/) for your platform (WebKit on Linux, Xcode CLI on macOS)
-
-### Build from source
-
-```bash
-git clone https://github.com/wangzewang/fluxtty
-cd fluxtty
-npm install
-npm run tauri build
-```
-
-Built app is in `src-tauri/target/release/bundle/`.
-
-### Development
-
-```bash
-npm run tauri dev
-```
 
 ---
 
@@ -320,63 +320,11 @@ persistence:
 
 ---
 
-## Tech stack
-
-| Layer | Technology |
-|---|---|
-| App framework | [Tauri 2](https://tauri.app/) |
-| Terminal emulator | [xterm.js 5](https://xtermjs.org/) (`@xterm/xterm`, `addon-fit`, `addon-web-links`, `addon-search`) |
-| PTY management | [portable-pty](https://github.com/wez/wezterm/tree/main/pty) |
-| Config | YAML via `serde_yaml`, file watching via `notify` |
-| Frontend | Vanilla TypeScript + Vite — no UI framework |
-| Backend | Rust + Tokio |
-
----
-
-## Project structure
-
-```
-fluxtty/
-├── src/                        # Frontend (TypeScript)
-│   ├── app.ts                  # Root layout, init sequence
-│   ├── waterfall/
-│   │   ├── WaterfallArea.ts    # Row layout, height calculation, pane container
-│   │   └── TerminalPane.ts     # xterm.js instance, pane header, note strip
-│   ├── input/
-│   │   ├── InputBar.ts         # Modal input bar: all five modes
-│   │   ├── ModeManager.ts      # Mode state machine
-│   │   ├── PaneSelector.ts     # Fuzzy pane search overlay
-│   │   └── AgentDetector.ts    # PTY output → agent type classification
-│   ├── sidebar/
-│   │   └── SessionSidebar.ts   # Grouped session tree
-│   ├── session/
-│   │   ├── SessionManager.ts   # Pane state, change events
-│   │   ├── AutoNamer.ts        # cwd + command → pane name rules
-│   │   └── types.ts            # PaneInfo, InputMode, AgentType
-│   ├── ai/
-│   │   ├── ai-handler.ts       # Workspace command dispatch (LLM + regex)
-│   │   ├── llm-client.ts       # Anthropic / OpenAI / Google / Ollama / claude-cli
-│   │   └── plan-executor.ts    # Multi-step plan confirmation + execution
-│   ├── config/
-│   │   └── ConfigContext.ts    # Config load, hot-reload, xterm theme derivation
-│   ├── keybindings/
-│   │   └── KeybindingManager.ts
-│   └── settings/
-│       └── SettingsPanel.ts    # 5-tab settings UI
-├── src-tauri/
-│   └── src/
-│       ├── pty.rs              # PTY spawn, resize, kill, I/O forwarding
-│       ├── session.rs          # PaneInfo state, layout
-│       ├── config.rs           # YAML load, validation, file watcher
-│       └── ipc.rs              # Tauri commands and events
-└── CLAUDE.md                   # Architecture decisions and constraints
-```
-
----
-
 ## Contributing
 
 Read `CLAUDE.md` before opening a pull request. It documents the core design decisions — the layout model, modal input system, and the scope of the Workspace AI — that should be understood before making significant changes.
+
+Built with: [Tauri 2](https://tauri.app/) · [xterm.js 5](https://xtermjs.org/) · [portable-pty](https://github.com/wez/wezterm/tree/main/pty) · Rust + Tokio · Vanilla TypeScript + Vite
 
 ---
 
