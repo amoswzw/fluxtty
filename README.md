@@ -4,12 +4,17 @@ vim, but for AI development.
 
 A modal terminal workspace for developers running many concurrent AI agent sessions. Navigate panes with `hjkl`, send commands in Insert mode, chat with your workspace AI in AI mode — all without touching the mouse.
 
+![CI](https://github.com/wangzewang/fluxtty/actions/workflows/ci.yml/badge.svg)
+![CodeQL](https://github.com/wangzewang/fluxtty/actions/workflows/codeql.yml/badge.svg)
+![Release](https://img.shields.io/github/v/release/wangzewang/fluxtty)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2.x-orange)
 ![Rust](https://img.shields.io/badge/Rust-1.77%2B-orange)
 
 **[Live demo and landing page →](https://wangzewang.github.io/fluxtty/)**
+
+<video src="https://github.com/wangzewang/fluxtty/releases/download/v0.1.1/demo.mp4" controls autoplay loop muted width="100%"></video>
 
 ---
 
