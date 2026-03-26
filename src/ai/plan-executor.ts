@@ -22,51 +22,80 @@ export function setPlanLogFn(fn: PlanLogFn) {
 class PlanExecutor {
   private plan: PlanStep[] | null = null;
   private planTitle = '';
-  private waitingForConfirm = false;
+  // Generic single-action confirmation: stores preview text + executor callback
+  private pendingPreview: string | null = null;
+  private pendingFn: (() => Promise<string>) | null = null;
 
   setPlan(steps: PlanStep[], title: string) {
     this.plan = steps;
     this.planTitle = title;
-    this.waitingForConfirm = true;
+    this.pendingPreview = null;
+    this.pendingFn = null;
+  }
+
+  /** Confirm a single arbitrary action without a multi-step plan. */
+  setPending(preview: string, fn: () => Promise<string>) {
+    this.plan = null;
+    this.planTitle = '';
+    this.pendingPreview = preview;
+    this.pendingFn = fn;
   }
 
   getPlanPreview(): string {
-    if (!this.plan) return '';
-    const lines = [`Plan: ${this.planTitle}`, ''];
-    for (const step of this.plan) {
-      lines.push(`  ${step.paneName} ❯ ${step.cmd}`);
+    if (this.plan) {
+      const lines = [`Plan: ${this.planTitle}`, ''];
+      for (const step of this.plan) {
+        const display = step.cmd === '__close__' ? '[close session]' : `❯ ${step.cmd}`;
+        lines.push(`  ${step.paneName} ${display}`);
+      }
+      lines.push('', 'Confirm? (y/n)');
+      return lines.join('\n');
     }
-    lines.push('');
-    lines.push('Confirm? (y/n)');
-    return lines.join('\n');
+    if (this.pendingPreview) {
+      return this.pendingPreview + '\n\nConfirm? (y/n)';
+    }
+    return '';
   }
 
   isWaitingForConfirm(): boolean {
-    return this.waitingForConfirm;
+    return this.plan !== null || this.pendingFn !== null;
   }
 
   async handleConfirm(input: string): Promise<string> {
-    if (!this.waitingForConfirm || !this.plan) return '';
+    if (!this.isWaitingForConfirm()) return '';
 
     if (input.trim().toLowerCase() === 'y') {
-      const plan = this.plan;
-      this.plan = null;
-      this.waitingForConfirm = false;
-      await this.executePlan(plan);
-      return 'Plan executed.';
-    } else {
-      this.plan = null;
-      this.waitingForConfirm = false;
-      return 'Plan cancelled.';
+      if (this.plan) {
+        const plan = this.plan;
+        this.plan = null;
+        await this.executePlan(plan);
+        return 'Done.';
+      }
+      if (this.pendingFn) {
+        const fn = this.pendingFn;
+        this.pendingFn = null;
+        this.pendingPreview = null;
+        return fn();
+      }
     }
+
+    this.plan = null;
+    this.pendingFn = null;
+    this.pendingPreview = null;
+    return 'Cancelled.';
   }
 
   private async executePlan(steps: PlanStep[]) {
     for (const step of steps) {
-      if (logFn) logFn(`  ${step.paneName} ❯ ${step.cmd}`, 'plan-step');
+      const display = step.cmd === '__close__' ? '[close]' : `❯ ${step.cmd}`;
+      if (logFn) logFn(`  ${step.paneName} ${display}`, 'plan-step');
       const tp = waterfallArea?.getPane(step.paneId);
       if (tp) {
-        await tp.writeCommand(step.cmd);
+        if (step.cmd === '__close__') {
+          await tp.destroy();
+        } else {
+          await tp.writeCommand(step.cmd);
+        }
       }
       await delay(300);
     }
