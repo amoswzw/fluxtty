@@ -109,8 +109,23 @@ export class InputBar {
   private bindKeys() {
     this.inputEl.addEventListener('keydown', (e) => this.handleKeyDown(e));
     this.inputEl.addEventListener('input', () => this.handleInput());
+    this.inputEl.addEventListener('paste', (e) => this.handlePaste(e));
     document.addEventListener('keydown', (e) => this.handleGlobalKey(e), true);
     document.addEventListener('focus-inputbar', () => this.inputEl.focus());
+  }
+
+  private async handlePaste(e: ClipboardEvent) {
+    const mode = modeManager.getMode();
+    if (mode.type !== 'insert') return;
+
+    const liveTyping = configContext.get().input.live_typing;
+    if (!liveTyping) return; // buffered mode: text sits in field and is sent on Enter
+
+    const text = e.clipboardData?.getData('text') ?? '';
+    if (!text) return;
+
+    await this.sendKeyToPTY(text);
+    // Don't preventDefault — let browser update the input field for visual feedback
   }
 
   private handleGlobalKey(e: KeyboardEvent) {
