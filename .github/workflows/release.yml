@@ -130,44 +130,24 @@ jobs:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: homebrew-tap
 
-      - name: Write cask file
+      - name: Update cask version and sha256
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           ARM64_SHA="${{ steps.sha.outputs.arm64 }}"
           X86_64_SHA="${{ steps.sha.outputs.x86_64 }}"
-          mkdir -p homebrew-tap/Casks
-          python3 - <<PYEOF
-import os
-version = os.environ['VERSION']
-arm64 = os.environ['ARM64_SHA']
-x86 = os.environ['X86_64_SHA']
-content = f'''cask "fluxtty" do
-  version "{version}"
+          CASK="homebrew-tap/Casks/fluxtty.rb"
 
-  on_arm do
-    url "https://github.com/wangzewang/fluxtty/releases/download/v#{{version}}/fluxtty_#{{version}}_aarch64.dmg"
-    sha256 "{arm64}"
-  end
+          # Update version
+          sed -i '' "s/version \".*\"/version \"${VERSION}\"/" "$CASK"
 
-  on_intel do
-    url "https://github.com/wangzewang/fluxtty/releases/download/v#{{version}}/fluxtty_#{{version}}_x86_64.dmg"
-    sha256 "{x86}"
-  end
+          # Update sha256 for arm (aarch64) — first occurrence
+          sed -i '' "0,/sha256 \".*\"/{s/sha256 \".*\"/sha256 \"${ARM64_SHA}\"/}" "$CASK"
 
-  name "fluxtty"
-  desc "Multi-session developer workspace terminal"
-  homepage "https://github.com/wangzewang/fluxtty"
-
-  app "fluxtty.app"
-end
-'''
-with open('homebrew-tap/Casks/fluxtty.rb', 'w') as f:
-    f.write(content)
-PYEOF
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          ARM64_SHA: ${{ steps.sha.outputs.arm64 }}
-          X86_64_SHA: ${{ steps.sha.outputs.x86_64 }}
+          # Update sha256 for intel (x86_64) — second occurrence
+          awk -v sha="${X86_64_SHA}" '
+            /sha256 ".*"/ && !done2 { if (done1) { sub(/sha256 ".*"/, "sha256 \"" sha "\""); done2=1 } else done1=1 }
+            { print }
+          ' "$CASK" > "$CASK.tmp" && mv "$CASK.tmp" "$CASK"
 
       - name: Push cask update
         working-directory: homebrew-tap
