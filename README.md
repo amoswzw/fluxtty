@@ -44,6 +44,13 @@
 
 ## Installation
 
+### Homebrew (macOS)
+
+```bash
+brew tap wangzewang/tap
+brew install --cask fluxtty
+```
+
 ### Download
 
 **[→ Download latest release](https://github.com/wangzewang/fluxtty/releases/latest)**
@@ -57,7 +64,7 @@
 
 ### macOS — first launch
 
-macOS will block the app on first open because it is not notarized. Run this once after installing:
+If installing via DMG (not Homebrew), macOS may block the app on first open because it is not notarized. Run this once after installing:
 
 ```bash
 sudo xattr -cr /Applications/fluxtty.app
