@@ -64,13 +64,13 @@ brew install --cask fluxtty
 
 ### macOS — first launch
 
-If installing via DMG (not Homebrew), macOS may block the app on first open because it is not notarized. Run this once after installing:
-
-```bash
-sudo xattr -cr /Applications/fluxtty.app
-```
-
-Then open normally from Finder or Spotlight.
+> **macOS will block fluxtty on first open** because it is not notarized. Run this once after installing:
+>
+> ```bash
+> sudo xattr -cr /Applications/fluxtty.app
+> ```
+>
+> Then open normally from Finder or Spotlight.
 
 ### Build from source
 
