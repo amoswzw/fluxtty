@@ -605,3 +605,86 @@ pub async fn pty_get_scrollback(
     let pty = pty_mgr.lock().unwrap();
     Ok(pty.get_scrollback(pane_id))
 }
+
+// ── Workspace snapshot (disk persistence — Phase 6.2) ──────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaneSnapshot {
+    pub name: String,
+    pub group: String,
+    pub note: String,
+    pub cwd: String,
+    pub row_index: usize,
+    pub pane_index: usize,
+    pub is_active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceSnapshot {
+    pub version: u32,
+    pub panes: Vec<PaneSnapshot>,
+}
+
+fn resolve_snapshot_path(cfg: &crate::config::PersistenceConfig) -> std::path::PathBuf {
+    let p = &cfg.disk_state_path;
+    if let Some(rest) = p.strip_prefix("~/") {
+        dirs::home_dir().unwrap_or_default().join(rest)
+    } else if p == "~" {
+        dirs::home_dir().unwrap_or_default()
+    } else {
+        std::path::PathBuf::from(p)
+    }
+}
+
+/// Save the current workspace layout to disk so it can be restored on next launch.
+#[tauri::command]
+pub async fn workspace_snapshot_save(
+    snapshot: WorkspaceSnapshot,
+    config: State<'_, SharedConfig>,
+) -> Result<(), String> {
+    let path = {
+        let cfg = config.lock().unwrap();
+        resolve_snapshot_path(&cfg.persistence)
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(&snapshot).map_err(|e| e.to_string())?;
+    // Atomic write via temp file + rename to avoid a corrupt snapshot on crash.
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, &json).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    log::info!("Workspace snapshot saved ({} panes) to {:?}", snapshot.panes.len(), path);
+    Ok(())
+}
+
+/// Load the workspace snapshot from disk. Returns None if no snapshot exists or it is corrupt.
+#[tauri::command]
+pub async fn workspace_snapshot_load(
+    config: State<'_, SharedConfig>,
+) -> Result<Option<WorkspaceSnapshot>, String> {
+    let path = {
+        let cfg = config.lock().unwrap();
+        resolve_snapshot_path(&cfg.persistence)
+    };
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("Could not read snapshot {:?}: {}", path, e);
+            return Ok(None);
+        }
+    };
+    match serde_json::from_str::<WorkspaceSnapshot>(&content) {
+        Ok(snap) => {
+            log::info!("Workspace snapshot loaded ({} panes) from {:?}", snap.panes.len(), path);
+            Ok(Some(snap))
+        }
+        Err(e) => {
+            log::warn!("Workspace snapshot corrupt, starting fresh: {}", e);
+            Ok(None)
+        }
+    }
+}
