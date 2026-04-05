@@ -75,8 +75,16 @@ html, body {
   user-select: none;
   -webkit-app-region: drag;
 }
-/* macOS traffic-light buttons occupy ~70px on the left */
-.platform-macos .app-header { padding-left: 78px; }
+/* macOS traffic-light buttons occupy ~70px on the left.
+   Use a real no-drag element instead of padding so clicks on the
+   traffic lights are not swallowed by the drag region. */
+.header-traffic-lights { display: none; }
+.platform-macos .header-traffic-lights {
+  display: block;
+  width: 78px;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
 /* Windows custom title bar adds controls on the right; leave space there */
 .platform-windows .app-header { padding-right: 140px; }
 

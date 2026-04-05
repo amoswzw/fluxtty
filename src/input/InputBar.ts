@@ -201,7 +201,7 @@ export class InputBar {
       if (e.key === 'i') { this.clearNormalGg(); if (sessionManager.getActivePaneId() != null) modeManager.enterInsert(); return; }
       if (e.key === 'a') { this.clearNormalGg(); modeManager.enterAI();     return; }
       if (e.key === ':')    { this.clearNormalGg(); this.enterNormalCommand(); return; }
-      if (e.key === '/')    { this.clearNormalGg(); this.inputEl.value = ''; this.paneSelector.open(''); return; }
+      if (e.key === '/')    { this.clearNormalGg(); this.inputEl.value = ''; modeManager.enterPaneSelector(); return; }
       if (e.key === 'Escape') { this.clearNormalGg(); return; }
 
       if (!e.ctrlKey && !e.altKey) {
@@ -580,7 +580,7 @@ export class InputBar {
 
   private handleSelectorCancel() {
     this.inputEl.value = '';
-    this.inputEl.focus();
+    modeManager.enterNormal();
   }
 
   // ── AI submission ─────────────────────────────────────────────────
@@ -664,6 +664,14 @@ export class InputBar {
     document.body.dataset.mode = mode.type;
     this.inputEl.readOnly = false;
     this.hideAutocomplete();
+
+    // Keep pane selector in sync with mode state.
+    if (mode.type === 'pane-selector') {
+      if (!this.paneSelector.isOpen()) this.paneSelector.open('');
+    } else {
+      // Close without firing the cancel callback (which would re-enter normal).
+      if (this.paneSelector.isOpen()) this.paneSelector.close();
+    }
 
     // Auto-hide log when leaving AI mode (collapse immediately on mode switch)
     if (prevMode === 'ai' && mode.type !== 'ai' && this.logExpanded) {

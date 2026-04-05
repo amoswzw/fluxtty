@@ -21,9 +21,35 @@ pub fn run() {
         .manage(new_shared_pty_manager(max_scrollback))
         .manage(new_shared_session_manager())
         .setup(move |app| {
+            use tauri::Manager;
+
             let handle = app.handle().clone();
             let cfg_shared = shared_config.clone();
 
+            // ── System tray ──────────────────────────────────────────────────
+            // Only created when persistence.tray_icon is true (default: true).
+            // Left-click → show + focus the main window.
+            let tray_icon_enabled = shared_config.lock().unwrap().persistence.tray_icon;
+            if tray_icon_enabled {
+                use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton};
+                let tray_handle = handle.clone();
+                if let Some(icon) = app.default_window_icon() {
+                    let _ = TrayIconBuilder::new()
+                        .icon(icon.clone())
+                        .tooltip("fluxtty")
+                        .on_tray_icon_event(move |_tray, event| {
+                            if let TrayIconEvent::Click { button: MouseButton::Left, .. } = event {
+                                if let Some(win) = tray_handle.get_webview_window("main") {
+                                    let _ = win.show();
+                                    let _ = win.set_focus();
+                                }
+                            }
+                        })
+                        .build(app);
+                }
+            }
+
+            // ── Config file watcher ──────────────────────────────────────────
             let watch_path = config::config_path();
 
             // Create parent directory so the watcher doesn't fail when
@@ -100,6 +126,8 @@ pub fn run() {
             get_env_var,
             claude_cli_query,
             llm_complete,
+            workspace_snapshot_save,
+            workspace_snapshot_load,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fluxtty");
