@@ -62,16 +62,6 @@ brew install --cask fluxtty
 | 🐧 Linux | `fluxtty_*_amd64.deb` · `.rpm` · `.AppImage` |
 | 🪟 Windows | `fluxtty_*_x64-setup.exe` |
 
-### macOS — first launch
-
-> **macOS will block fluxtty on first open** because it is not notarized. Run this once after installing:
->
-> ```bash
-> sudo xattr -cr /Applications/fluxtty.app
-> ```
->
-> Then open normally from Finder or Spotlight.
-
 ### Build from source
 
 **Prerequisites:** [Rust](https://rustup.rs/) 1.77+, [Node.js](https://nodejs.org/) 18+, [Tauri v2 prerequisites](https://tauri.app/start/prerequisites/)
