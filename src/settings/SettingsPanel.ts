@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import { configContext } from '../config/ConfigContext';
 import { llmClient } from '../ai/llm-client';
+import { hintManager } from '../hints/HintManager';
+import { modeManager } from '../input/ModeManager';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -82,7 +84,7 @@ interface F {
   path: string;
   label: string;
   type: FType;
-  opts?: string[];          // for select / combobox suggestions
+  opts?: Array<string | { value: string; label: string }>; // for select / combobox suggestions
   min?: number; max?: number; step?: number;
   desc?: string;
   read?: (v: any) => string;
@@ -116,7 +118,7 @@ const ACTIONS = [
   'OpenSettings',
 ];
 
-const MOD_KEYS = ['Control', 'Shift', 'Alt'] as const;
+const MOD_KEYS = ['Control', 'Shift', 'Alt', 'Meta'] as const;
 type ModKey = typeof MOD_KEYS[number];
 function formatMods(mods: Set<ModKey>): string | undefined {
   const ordered = MOD_KEYS.filter(m => mods.has(m));
@@ -126,6 +128,7 @@ function kbLabel(key: string, mods: string | undefined): string {
   const parts: string[] = [];
   if (mods) for (const m of mods.split('|').map(s => s.trim())) {
     if (m.toLowerCase() === 'control') parts.push('Ctrl');
+    else if (m.toLowerCase() === 'meta') parts.push('Cmd');
     else if (m) parts.push(m);
   }
   parts.push(key);
@@ -168,6 +171,13 @@ const KNOWN_MODELS = [
 ];
 
 const KNOWN_THEMES = ['', 'default-dark', 'catppuccin-mocha', 'gruvbox-dark', 'solarized-dark'];
+const WORKSPACE_SCROLL_MODIFIER_OPTIONS = [
+  { value: 'meta', label: 'Command' },
+  { value: 'control', label: 'Control' },
+  { value: 'alt', label: 'Option / Alt' },
+  { value: 'shift', label: 'Shift' },
+  { value: 'disabled', label: 'Disabled' },
+] as const;
 
 interface ThemeColors {
   primary: { background: string; foreground: string };
@@ -420,6 +430,62 @@ const SECTIONS: Section[] = [
           { path: 'persistence.save_scrollback_on_exit', label: 'Save scrollback on exit', type: 'checkbox' },
         ],
       },
+      {
+        label: 'Help & Onboarding',
+        custom: (_cfg, el) => {
+          const row = document.createElement('div');
+          row.className = 'st-field';
+
+          const label = document.createElement('label');
+          label.className = 'st-label';
+          label.textContent = 'Guide';
+          const desc = document.createElement('span');
+          desc.className = 'st-desc';
+          desc.textContent = 'Replay the first-run guide, open the persistent cheat sheet, or reset contextual hints.';
+          label.appendChild(desc);
+          row.appendChild(label);
+
+          const actions = document.createElement('div');
+          actions.className = 'st-actions';
+
+          const quickStartBtn = document.createElement('button');
+          quickStartBtn.className = 'settings-btn';
+          quickStartBtn.type = 'button';
+          quickStartBtn.textContent = 'Replay quick start';
+          quickStartBtn.addEventListener('click', () => {
+            document.dispatchEvent(new CustomEvent('open-quick-start'));
+          });
+          actions.appendChild(quickStartBtn);
+
+          const cheatSheetBtn = document.createElement('button');
+          cheatSheetBtn.className = 'settings-btn';
+          cheatSheetBtn.type = 'button';
+          cheatSheetBtn.textContent = 'Open cheat sheet';
+          cheatSheetBtn.addEventListener('click', () => {
+            document.dispatchEvent(new CustomEvent('open-cheat-sheet'));
+          });
+          actions.appendChild(cheatSheetBtn);
+
+          const resetBtn = document.createElement('button');
+          resetBtn.className = 'settings-btn';
+          resetBtn.type = 'button';
+          resetBtn.textContent = 'Reset hints';
+
+          const status = document.createElement('span');
+          status.className = 'st-test-status ok';
+
+          resetBtn.addEventListener('click', () => {
+            hintManager.reset();
+            hintManager.showCurrentHint(modeManager.getMode().type);
+            status.textContent = 'Hints reset. Relevant tips will appear again.';
+          });
+
+          actions.appendChild(resetBtn);
+          actions.appendChild(status);
+          row.appendChild(actions);
+          el.appendChild(row);
+        },
+      },
     ],
   },
 
@@ -469,6 +535,13 @@ const SECTIONS: Section[] = [
             path: 'input.live_typing', label: 'Live typing', type: 'checkbox',
             desc: 'Forward each keystroke to the PTY immediately — shell handles line editing and history',
           },
+          {
+            path: 'input.workspace_scroll_modifier',
+            label: 'Workspace scroll modifier',
+            type: 'select',
+            opts: [...WORKSPACE_SCROLL_MODIFIER_OPTIONS],
+            desc: 'While hovering a terminal, plain wheel scrolls terminal scrollback; hold this key to scroll the workspace instead',
+          },
         ],
       },
       {
@@ -478,6 +551,8 @@ const SECTIONS: Section[] = [
           { path: 'waterfall.fixed_row_height', label: 'Fixed row height', type: 'number', min: 10, max: 200, desc: 'rows (used when mode = fixed)' },
           { path: 'waterfall.scroll_snap',      label: 'Scroll snap',      type: 'checkbox' },
           { path: 'waterfall.new_pane_focus',   label: 'Focus new pane',   type: 'checkbox' },
+          { path: 'waterfall.note_width',       label: 'Note pane width',  type: 'number', min: 120, max: 800, desc: 'px — default width of the note pane' },
+          { path: 'waterfall.pane_min_width',   label: 'Pane min width',   type: 'number', min: 80,  max: 600, desc: 'px — minimum width for terminal panes (enforced during drag resize)' },
         ],
       },
     ],
@@ -526,6 +601,7 @@ const SECTIONS: Section[] = [
               if (e.ctrlKey)  mods.add('Control');
               if (e.shiftKey) mods.add('Shift');
               if (e.altKey)   mods.add('Alt');
+              if (e.metaKey)  mods.add('Meta');
               kbs[i].key  = e.key.length === 1 ? e.key.toUpperCase() : e.key;
               kbs[i].mods = formatMods(mods);
               recBtn.textContent = kbLabel(kbs[i].key, kbs[i].mods);
@@ -1007,9 +1083,12 @@ export class SettingsPanel {
       const sel = document.createElement('select');
       sel.className = 'st-input';
       for (const opt of f.opts ?? []) {
+        const value = typeof opt === 'string' ? opt : opt.value;
+        const label = typeof opt === 'string' ? (opt || '(auto)') : opt.label;
         const o = document.createElement('option');
-        o.value = opt; o.textContent = opt || '(auto)';
-        if (opt === String(displayVal ?? '')) o.selected = true;
+        o.value = value;
+        o.textContent = label;
+        if (value === String(displayVal ?? '')) o.selected = true;
         sel.appendChild(o);
       }
       sel.addEventListener('change', () => {
@@ -1031,7 +1110,7 @@ export class SettingsPanel {
       dl.id = listId;
       for (const opt of f.opts ?? []) {
         const o = document.createElement('option');
-        o.value = opt;
+        o.value = typeof opt === 'string' ? opt : opt.value;
         dl.appendChild(o);
       }
       inp.addEventListener('input', () => {

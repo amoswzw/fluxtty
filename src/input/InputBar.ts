@@ -9,6 +9,7 @@ import { aiHandler } from '../ai/ai-handler';
 import { planExecutor } from '../ai/plan-executor';
 import { suggestName, isSignificantCommand, isDefaultName, markAutoNamed, isAutoNamed } from '../session/AutoNamer';
 import { configContext } from '../config/ConfigContext';
+import { hintManager, type ActiveHint } from '../hints/HintManager';
 
 function longestCommonPrefix(strs: string[]): string {
   if (strs.length === 0) return '';
@@ -22,11 +23,20 @@ function longestCommonPrefix(strs: string[]): string {
   return prefix;
 }
 
+function isEditableElement(el: Element | null): boolean {
+  return el instanceof HTMLTextAreaElement
+    || el instanceof HTMLInputElement
+    || (el instanceof HTMLElement && el.isContentEditable);
+}
+
 export class InputBar {
   readonly el: HTMLElement;
   private inputEl!: HTMLInputElement;
   private promptEl!: HTMLElement;
   private modeIndicatorEl!: HTMLElement;
+  private hintEl!: HTMLElement;
+  private hintBadgeEl!: HTMLElement;
+  private hintTextEl!: HTMLElement;
   private logEl!: HTMLElement;
   private autocompleteEl!: HTMLElement;
   private paneSelector: PaneSelector;
@@ -44,6 +54,7 @@ export class InputBar {
 
   // Normal mode: inline command sub-state (activated by ':')
   private normalCommandActive = false;
+  private lastModeType: InputMode['type'] | null = null;
 
   constructor(container: HTMLElement) {
     this.el = document.createElement('div');
@@ -57,8 +68,16 @@ export class InputBar {
     this.buildDOM();
     container.appendChild(this.el);
 
-    modeManager.onChange((mode) => this.updateMode(mode));
-    this.updateMode(modeManager.getMode());
+    hintManager.onChange((hint) => this.renderHint(hint));
+    modeManager.onChange((mode) => {
+      this.updateMode(mode);
+      hintManager.record({ type: 'mode-changed', mode: mode.type, prevMode: this.lastModeType });
+      this.lastModeType = mode.type;
+    });
+    const initialMode = modeManager.getMode();
+    this.updateMode(initialMode);
+    hintManager.record({ type: 'mode-changed', mode: initialMode.type, prevMode: null });
+    this.lastModeType = initialMode.type;
     this.bindKeys();
 
 
@@ -87,6 +106,29 @@ export class InputBar {
     this.modeIndicatorEl = document.createElement('span');
     this.modeIndicatorEl.className = 'mode-indicator';
 
+    this.hintEl = document.createElement('div');
+    this.hintEl.className = 'input-hint';
+
+    this.hintBadgeEl = document.createElement('span');
+    this.hintBadgeEl.className = 'input-hint-badge';
+    this.hintBadgeEl.textContent = 'Hint';
+
+    this.hintTextEl = document.createElement('div');
+    this.hintTextEl.className = 'input-hint-text';
+
+    const hintCloseBtn = document.createElement('button');
+    hintCloseBtn.className = 'input-hint-close';
+    hintCloseBtn.type = 'button';
+    hintCloseBtn.textContent = '✕';
+    hintCloseBtn.title = 'Dismiss hint';
+    hintCloseBtn.addEventListener('click', () => hintManager.dismissActive());
+
+    this.hintEl.appendChild(this.hintBadgeEl);
+    this.hintEl.appendChild(this.hintTextEl);
+    this.hintEl.appendChild(hintCloseBtn);
+    this.hintEl.addEventListener('mouseenter', () => hintManager.pauseActive());
+    this.hintEl.addEventListener('mouseleave', () => hintManager.resumeActive());
+
     this.promptEl = document.createElement('span');
     this.promptEl.className = 'input-prompt';
 
@@ -103,6 +145,7 @@ export class InputBar {
     this.el.appendChild(this.logEl);
     this.el.appendChild(this.paneSelector.el);
     this.el.appendChild(this.autocompleteEl);
+    this.el.appendChild(this.hintEl);
     this.el.appendChild(row);
   }
 
@@ -133,6 +176,7 @@ export class InputBar {
     if (e.ctrlKey && e.key === '\\') {
       e.preventDefault();
       e.stopPropagation();
+      hintManager.record({ type: 'terminal-toggle-used' });
       modeManager.toggle();
       if (!modeManager.isInPaneMode()) this.inputEl.focus();
       return;
@@ -143,8 +187,8 @@ export class InputBar {
     // Intercept here (capture phase), refocus, and forward to handleKeyDown.
     const mode = modeManager.getMode();
     const active = document.activeElement;
-    const focusInTextEditor = active instanceof HTMLTextAreaElement
-      || (active instanceof HTMLInputElement && active !== this.inputEl);
+    const target = e.target instanceof Element ? e.target : null;
+    const focusInTextEditor = isEditableElement(active) || isEditableElement(target);
     if (mode.type === 'normal' && active !== this.inputEl && !focusInTextEditor && !this.paneSelector.isOpen()) {
       this.inputEl.focus();
       this.handleKeyDown(e);
@@ -205,10 +249,10 @@ export class InputBar {
       if (e.key === 'Escape') { this.clearNormalGg(); return; }
 
       if (!e.ctrlKey && !e.altKey) {
-        if (e.key === 'h' || e.key === 'ArrowLeft')  { this.dispatchWorkspaceAction('FocusPrevPane'); return; }
-        if (e.key === 'j' || e.key === 'ArrowDown')  { this.dispatchWorkspaceAction('FocusNextRow');  return; }
-        if (e.key === 'k' || e.key === 'ArrowUp')    { this.dispatchWorkspaceAction('FocusPrevRow');  return; }
-        if (e.key === 'l' || e.key === 'ArrowRight') { this.dispatchWorkspaceAction('FocusNextPane'); return; }
+        if (e.key === 'h' || e.key === 'ArrowLeft')  { this.noteNormalShortcut('h'); this.dispatchWorkspaceAction('FocusPrevPane'); return; }
+        if (e.key === 'j' || e.key === 'ArrowDown')  { this.noteNormalShortcut('j'); this.dispatchWorkspaceAction('FocusNextRow');  return; }
+        if (e.key === 'k' || e.key === 'ArrowUp')    { this.noteNormalShortcut('k'); this.dispatchWorkspaceAction('FocusPrevRow');  return; }
+        if (e.key === 'l' || e.key === 'ArrowRight') { this.noteNormalShortcut('l'); this.dispatchWorkspaceAction('FocusNextPane'); return; }
         if (e.key === 'w') { this.dispatchWorkspaceAction('FocusNextPane'); return; }
         if (e.key === 'W') { this.dispatchWorkspaceAction('FocusPrevPane'); return; }
         if (e.key === 'G') { this.dispatchViScroll('bottom'); return; }
@@ -223,12 +267,12 @@ export class InputBar {
           }
           return;
         }
-        if (e.key === 'n') { this.dispatchWorkspaceAction('NewTerminal');          return; }
-        if (e.key === 's') { this.dispatchWorkspaceAction('SplitHorizontal');      return; }
-        if (e.key === 'q') { this.dispatchWorkspaceAction('ClosePane');            return; }
+        if (e.key === 'n') { this.noteNormalShortcut('n'); this.dispatchWorkspaceAction('NewTerminal');          return; }
+        if (e.key === 's') { this.noteNormalShortcut('s'); this.dispatchWorkspaceAction('SplitHorizontal');      return; }
+        if (e.key === 'q') { this.noteNormalShortcut('q'); this.dispatchWorkspaceAction('ClosePane');            return; }
         if (e.key === 'b') { this.dispatchWorkspaceAction('ToggleSidebar');        return; }
-        if (e.key === 'r') { this.dispatchWorkspaceAction('RenameCurrentSession'); return; }
-        if (e.key === 'm') { document.dispatchEvent(new CustomEvent('open-pane-note')); return; }
+        if (e.key === 'r') { this.noteNormalShortcut('r'); this.dispatchWorkspaceAction('RenameCurrentSession'); return; }
+        if (e.key === 'm') { this.noteNormalShortcut('m'); document.dispatchEvent(new CustomEvent('open-pane-note')); return; }
       }
 
       if (e.ctrlKey) {
@@ -311,6 +355,7 @@ export class InputBar {
         if (e.key === 'Enter') {
           e.preventDefault();
           const text = this.inputEl.value;
+          const activeId = sessionManager.getActivePaneId();
           if (text.trim() && (this.cmdHistory.length === 0 || this.cmdHistory[this.cmdHistory.length - 1] !== text)) {
             this.cmdHistory.push(text);
           }
@@ -318,6 +363,8 @@ export class InputBar {
           this.historyDraft = '';
           this.inputEl.value = '';
           this.sendKeyToPTY('\r');
+          document.dispatchEvent(new CustomEvent('scroll-to-active-pane'));
+          if (activeId != null) this.notifyInsertCommandSubmitted(text, activeId);
           return;
         }
         // Arrow keys: clear input (shell will echo new state) + send escape seq
@@ -425,6 +472,14 @@ export class InputBar {
     document.dispatchEvent(new CustomEvent('normal-vi-scroll', { detail: { cmd } }));
   }
 
+  private notifyInsertCommandSubmitted(text: string, paneId: number) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    document.dispatchEvent(new CustomEvent('insert-command-submitted', {
+      detail: { text: trimmed, paneId },
+    }));
+  }
+
   private handleInput() {
     const mode = modeManager.getMode();
 
@@ -510,6 +565,7 @@ export class InputBar {
 
     await invoke('pty_write', { args: { pane_id: activeId, data: text + '\r' } }).catch(console.error);
     document.dispatchEvent(new CustomEvent('scroll-to-active-pane'));
+    this.notifyInsertCommandSubmitted(text, activeId);
   }
 
   private async sendKeyToPTY(data: string) {
@@ -627,6 +683,33 @@ export class InputBar {
     }, delayMs);
   }
 
+  private renderHint(hint: ActiveHint | null) {
+    if (!hint) {
+      this.hintEl.classList.remove('visible');
+      this.hintTextEl.replaceChildren();
+      return;
+    }
+    this.hintTextEl.replaceChildren(...this.renderHintNodes(hint.text));
+    this.hintEl.classList.add('visible');
+  }
+
+  private noteNormalShortcut(key: string) {
+    hintManager.record({ type: 'normal-shortcut-used', key });
+  }
+
+  private renderHintNodes(text: string): Node[] {
+    const parts = text.split(/(`[^`]+`)/g).filter(Boolean);
+    return parts.map(part => {
+      if (part.startsWith('`') && part.endsWith('`')) {
+        const keycap = document.createElement('kbd');
+        keycap.className = 'hint-keycap';
+        keycap.textContent = part.slice(1, -1);
+        return keycap;
+      }
+      return document.createTextNode(part);
+    });
+  }
+
   // ── Mode rendering ────────────────────────────────────────────────
 
   private refreshInsertPrompt() {
@@ -635,16 +718,10 @@ export class InputBar {
     const busy = pane?.status === 'running';
     const agent = pane ? agentDetector.getAgent(pane.id) : 'none';
 
-    const rowCount = sessionManager.getRowCount();
-    const rowNum = pane
-      ? sessionManager.getPanesByRow().findIndex(r => r.some(p => p.id === pane.id)) + 1
-      : 1;
-
     this.promptEl.textContent = `${name}${busy ? ' ●' : ''} ❯`;
     this.promptEl.title = busy ? `${name} — running` : name;
 
     let modeText = 'INSERT';
-    if (rowCount > 1) modeText += ` ${rowNum}/${rowCount}`;
     if (agent !== 'none') modeText += ` · ${agent}`;
     this.modeIndicatorEl.textContent = modeText;
     this.modeIndicatorEl.className = agent !== 'none'

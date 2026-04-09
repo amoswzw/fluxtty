@@ -4,13 +4,26 @@ import { sessionManager } from '../session/SessionManager';
 import { modeManager } from '../input/ModeManager';
 import { configContext } from '../config/ConfigContext';
 import { nameFromCwd, isDefaultName, markAutoNamed, isAutoNamed } from '../session/AutoNamer';
+import { hintManager } from '../hints/HintManager';
+
+const WATERFALL_ROW_GAP = 5;
+const PANE_HEADER_HEIGHT = 30;
+const ROW_BORDER_Y = 2;
+const TERM_PADDING_X = 8;
+const TERM_PADDING_Y = 8;
+const PANE_RESIZE_HANDLE_WIDTH = 6;
+const MIN_PTY_COLS = 20;
+const MIN_PTY_ROWS = 8;
+type WorkspaceScrollModifier = 'meta' | 'control' | 'alt' | 'shift' | 'disabled';
 
 export class WaterfallArea {
   readonly el: HTMLElement;
   private panes: Map<number, TerminalPane> = new Map();
   private rowEls: HTMLElement[] = [];
+  private rowNotes: Map<HTMLElement, string> = new Map();
   private nextPaneId = 1;
   private prevCwd: Map<number, string> = new Map();
+  private lastPointerPos: { x: number; y: number } | null = null;
 
   constructor(container: HTMLElement) {
     this.el = document.createElement('div');
@@ -44,6 +57,19 @@ export class WaterfallArea {
 
     window.addEventListener('resize', () => this.recalcRowHeights());
 
+    document.addEventListener('mousemove', (e) => {
+      this.lastPointerPos = { x: e.clientX, y: e.clientY };
+      if (this.isWorkspaceScrollModifierHeld(e)) {
+        this.syncHoveredPaneFromPointer();
+      }
+    }, true);
+    document.addEventListener('keydown', (e) => {
+      if (!['Meta', 'Control', 'Alt', 'Shift'].includes(e.key)) return;
+      if (this.isWorkspaceScrollModifierHeld(e)) {
+        this.syncHoveredPaneFromPointer();
+      }
+    }, true);
+
     // Font size adjustment (Ctrl+Plus / Ctrl+Minus / Ctrl+0)
     let currentFontSize = configContext.get().font.size;
     document.addEventListener('font-size-action', (e: Event) => {
@@ -62,7 +88,12 @@ export class WaterfallArea {
     });
 
     document.addEventListener('open-pane-note', () => {
-      this.getActivePane()?.openNote();
+      const activeId = sessionManager.getActivePaneId();
+      if (activeId == null) return;
+      const pane = this.panes.get(activeId);
+      if (!pane) return;
+      const rowEl = pane.el.parentElement as HTMLElement;
+      this.openRowNote(rowEl);
     });
 
     document.addEventListener('scroll-to-active-pane', () => {
@@ -93,36 +124,25 @@ export class WaterfallArea {
     const cfg = configContext.get();
     const rowCount = this.rowEls.length;
 
-    let rowH: number;
+    let rowHeight: number;
     if (cfg.waterfall.row_height_mode === 'fixed') {
-      rowH = cfg.waterfall.fixed_row_height * 16;
+      rowHeight = cfg.waterfall.fixed_row_height * 16;
     } else {
       // Two-phase layout:
-      //  Phase 1 — rows fit on screen: divide height equally, no scrolling.
-      //  Phase 2 — too many rows: each row = full container height, scroll
-      //            one row at a time (classic waterfall paging).
-      //
-      // The threshold is computed from the actual font size so it scales
-      // correctly across all screen sizes and resolutions:
-      //   threshold = pane header + (MIN_LINES × line height)
-      // A row below this height can't display enough useful terminal content.
-      const MIN_LINES = 18;                          // minimum useful terminal lines per row
-      const PANE_HEADER_H = 28;                      // matches pane header DOM height
-      const lineH = cfg.font.size * 1.2;             // xterm default line height ratio
-      const threshold = PANE_HEADER_H + Math.ceil(MIN_LINES * lineH);
-
-      const GAP = 4; // matches gap: 4px in .waterfall-area CSS
-      const paddingY = cfg.window.padding.y;
-      const overhead = paddingY * 2 + (rowCount > 1 ? GAP * (rowCount - 1) : 0);
-      const ideal = rowCount > 0 ? Math.floor((containerH - overhead) / rowCount) : containerH;
-      // Phase 1: all rows fit — divide evenly, no scrolling needed.
-      // Phase 2: too many rows — each row stays at threshold height,
-      //          waterfall area scrolls. Window size never changes.
-      rowH = ideal >= threshold ? ideal : threshold;
+      // Phase 1: rows fit on screen, divide height evenly.
+      // Phase 2: rows stop shrinking once they hit the minimum useful height;
+      // the workspace remains scrollable in a classic waterfall layout.
+      const MIN_LINES = 18;
+      const paneChromeH = PANE_HEADER_HEIGHT + ROW_BORDER_Y + TERM_PADDING_Y;
+      const lineH = cfg.font.size * 1.2;
+      const threshold = paneChromeH + Math.ceil(MIN_LINES * lineH);
+      const overhead = cfg.window.padding.y * 2 + (rowCount > 1 ? WATERFALL_ROW_GAP * (rowCount - 1) : 0);
+      const idealOuterHeight = rowCount > 0 ? Math.floor((containerH - overhead) / rowCount) : containerH;
+      rowHeight = idealOuterHeight >= threshold ? idealOuterHeight : threshold;
     }
 
     for (const rowEl of this.rowEls) {
-      rowEl.style.height = `${rowH}px`;
+      rowEl.style.height = `${rowHeight}px`;
     }
 
     for (const pane of this.panes.values()) {
@@ -130,11 +150,161 @@ export class WaterfallArea {
     }
   }
 
+  private scrollRowWindowIntoView(rowEl: HTMLElement, behavior: ScrollBehavior = 'smooth') {
+    if (this.el.scrollHeight <= this.el.clientHeight + 1) {
+      rowEl.scrollIntoView({ behavior, block: 'nearest' });
+      return;
+    }
+
+    const targetIndex = this.rowEls.indexOf(rowEl);
+    if (targetIndex < 0) {
+      rowEl.scrollIntoView({ behavior, block: 'nearest' });
+      return;
+    }
+
+    const paddingY = configContext.get().window.padding.y;
+    const visibleH = Math.max(this.el.clientHeight - paddingY * 2, 1);
+    const rowHeight = Math.max(
+      rowEl.getBoundingClientRect().height || rowEl.clientHeight || Math.round(parseFloat(rowEl.style.height || '0')),
+      1,
+    );
+    const rowsPerViewport = Math.max(1, Math.floor((visibleH + WATERFALL_ROW_GAP) / (rowHeight + WATERFALL_ROW_GAP)));
+    const maxStart = Math.max(this.rowEls.length - rowsPerViewport, 0);
+    const startIndex = Math.min(Math.max(targetIndex - rowsPerViewport + 1, 0), maxStart);
+    const top = Math.max(this.rowEls[startIndex].offsetTop - paddingY, 0);
+    this.el.scrollTo({ top, behavior });
+  }
+
+  private normalizeScrollModifier(value: string | null | undefined): WorkspaceScrollModifier {
+    const normalized = (value ?? '').toLowerCase();
+    switch (normalized) {
+      case 'meta':
+      case 'control':
+      case 'alt':
+      case 'shift':
+      case 'disabled':
+        return normalized as WorkspaceScrollModifier;
+      default:
+        return 'meta';
+    }
+  }
+
+  private shouldRouteWheelToWorkspace(e: WheelEvent): boolean {
+    switch (this.normalizeScrollModifier(configContext.get().input.workspace_scroll_modifier)) {
+      case 'meta':
+        return e.metaKey;
+      case 'control':
+        return e.ctrlKey;
+      case 'alt':
+        return e.altKey;
+      case 'shift':
+        return e.shiftKey;
+      case 'disabled':
+      default:
+        return false;
+    }
+  }
+
+  private isWorkspaceScrollModifierHeld(e: Pick<MouseEvent, 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>): boolean {
+    switch (this.normalizeScrollModifier(configContext.get().input.workspace_scroll_modifier)) {
+      case 'meta':
+        return e.metaKey;
+      case 'control':
+        return e.ctrlKey;
+      case 'alt':
+        return e.altKey;
+      case 'shift':
+        return e.shiftKey;
+      case 'disabled':
+      default:
+        return false;
+    }
+  }
+
+  private syncHoveredPaneFromPointer() {
+    if (!this.lastPointerPos) return;
+    const hovered = document.elementFromPoint(this.lastPointerPos.x, this.lastPointerPos.y) as HTMLElement | null;
+    const paneEl = hovered?.closest('.terminal-pane') as HTMLElement | null;
+    const paneId = paneEl?.dataset.paneId ? Number(paneEl.dataset.paneId) : null;
+    if (paneId != null && Number.isFinite(paneId) && sessionManager.getActivePaneId() !== paneId) {
+      void sessionManager.setActivePane(paneId);
+    }
+  }
+
+  private wheelDeltaToPixels(e: WheelEvent): number {
+    if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+      return e.deltaY * configContext.get().font.size * 1.2;
+    }
+    if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+      return e.deltaY * (this.el.clientHeight || window.innerHeight);
+    }
+    return e.deltaY;
+  }
+
+  private handleRowWheel(e: WheelEvent) {
+    const target = e.target instanceof HTMLElement ? e.target : null;
+    if (!target) return;
+
+    // Terminal content has its own explicit wheel routing in TerminalPane.
+    // Still cancel the browser's default scroll-chain here so workspace
+    // scrolling can never leak through when the terminal is at an edge.
+    if (target.closest('.term-container') || target.closest('.xterm')) {
+      if (!this.shouldRouteWheelToWorkspace(e)) {
+        e.preventDefault();
+      }
+      return;
+    }
+
+    const deltaPixels = this.wheelDeltaToPixels(e);
+    if (deltaPixels === 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
+    if (this.shouldRouteWheelToWorkspace(e)) {
+      const paneEl = target.closest('.terminal-pane') as HTMLElement | null;
+      const paneId = paneEl?.dataset.paneId ? Number(paneEl.dataset.paneId) : null;
+      if (paneId != null && Number.isFinite(paneId) && sessionManager.getActivePaneId() !== paneId) {
+        void sessionManager.setActivePane(paneId);
+      }
+
+      hintManager.record({ type: 'workspace-scroll-used' });
+      document.dispatchEvent(new CustomEvent('workspace-scroll-used'));
+      e.preventDefault();
+      e.stopPropagation();
+      this.el.scrollBy({
+        top: deltaPixels * Math.max(1, configContext.get().scrolling.multiplier || 1),
+        behavior: 'auto',
+      });
+      return;
+    }
+
+    const noteTextarea = target.closest('.row-note-textarea') as HTMLTextAreaElement | null;
+    if (noteTextarea) {
+      e.preventDefault();
+      e.stopPropagation();
+      noteTextarea.scrollTop += deltaPixels;
+      return;
+    }
+
+    // Pane headers, resize handles, note chrome, and row background should
+    // never scroll the outer workspace unless the modifier is held.
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  private attachRowInteractions(row: HTMLElement) {
+    row.addEventListener('wheel', (e) => this.handleRowWheel(e), { passive: false, capture: true });
+  }
+
   private createRow(): HTMLElement {
     const row = document.createElement('div');
     row.className = 'terminal-row';
+    this.attachRowInteractions(row);
     this.el.appendChild(row);
     this.rowEls.push(row);
+    this.attachRowNote(row);
     this.recalcRowHeights();
     return row;
   }
@@ -144,6 +314,7 @@ export class WaterfallArea {
   private insertRowAfter(afterIndex: number): HTMLElement {
     const row = document.createElement('div');
     row.className = 'terminal-row';
+    this.attachRowInteractions(row);
     if (afterIndex >= 0 && afterIndex < this.rowEls.length) {
       this.rowEls[afterIndex].insertAdjacentElement('afterend', row);
       this.rowEls.splice(afterIndex + 1, 0, row);
@@ -151,6 +322,7 @@ export class WaterfallArea {
       this.el.appendChild(row);
       this.rowEls.push(row);
     }
+    this.attachRowNote(row);
     this.recalcRowHeights();
     return row;
   }
@@ -177,7 +349,6 @@ export class WaterfallArea {
 
   async spawnPane(opts: { newRow: boolean; group?: string; cwd?: string; targetRow?: number; afterPaneId?: number }): Promise<TerminalPane | null> {
     const paneId = this.nextPaneId++;
-    const cfg = configContext.get();
 
     // Inherit cwd from active pane for both new terminals and splits (unless explicitly overridden)
     const inheritedCwd = opts.cwd ?? sessionManager.getActivePane()?.cwd;
@@ -194,15 +365,11 @@ export class WaterfallArea {
       row = this.getOrCreateRow(targetRowIndex);
     }
 
-    const charW = cfg.font.size * 0.6;
-    const charH = cfg.font.size * 1.2;
-    const paneHeaderH = 28;
-    const containerW = this.el.clientWidth || window.innerWidth;
-    const containerH = this.el.clientHeight || (window.innerHeight - 78);
-    const availW = containerW - 24;
-    const availH = containerH - paneHeaderH - 12;
-    const estCols = Math.max(Math.floor(availW / charW), 80);
-    const estRows = Math.max(Math.floor(availH / charH), 24);
+    const existingTermCount = this.getTerminalPanes(row).length;
+    const { cols: estCols, rows: estRows } = this.estimatePaneSize(
+      row,
+      opts.newRow ? 1 : existingTermCount + 1,
+    );
 
     try {
       await invoke('pty_spawn', {
@@ -247,6 +414,7 @@ export class WaterfallArea {
     } else {
       row.appendChild(pane.el);
     }
+    this.refreshRowLayout(row);
 
     // Register pty-data and pty-closed listeners now, with await, so the
     // pty-closed handler is guaranteed to be active before we return.
@@ -282,7 +450,7 @@ export class WaterfallArea {
     });
 
     setTimeout(() => {
-      pane.el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      this.scrollRowWindowIntoView(row, 'smooth');
     }, 50);
 
     return pane;
@@ -293,12 +461,15 @@ export class WaterfallArea {
 
     this.panes.delete(id);
     this.prevCwd.delete(id);
-    // Remove empty rows
+    // Remove empty rows; sync resize handles on rows that still have panes
     this.rowEls = this.rowEls.filter(row => {
-      if (row.children.length === 0) {
+      const termPanes = this.getTerminalPanes(row);
+      if (termPanes.length === 0) {
+        this.rowNotes.delete(row);
         row.remove();
         return false;
       }
+      this.refreshRowLayout(row);
       return true;
     });
     this.recalcRowHeights();
@@ -386,6 +557,7 @@ export class WaterfallArea {
     return this.rowEls
       .map(rowEl =>
         Array.from(rowEl.children)
+          .filter(c => (c as HTMLElement).classList.contains('terminal-pane'))
           .map(child => {
             for (const [id, pane] of this.panes) {
               if (pane.el === child) return { id };
@@ -395,5 +567,273 @@ export class WaterfallArea {
           .filter((p): p is { id: number } => p !== null)
       )
       .filter(row => row.length > 0);
+  }
+
+  getRowNote(rowEl: HTMLElement): string {
+    return this.rowNotes.get(rowEl) ?? '';
+  }
+
+  setRowNote(rowEl: HTMLElement, text: string) {
+    this.rowNotes.set(rowEl, text);
+    this._syncNoteBtn(rowEl, text);
+    const existing = rowEl.querySelector('.row-note-pane') as HTMLElement | null;
+    if (existing) {
+      const ta = existing.querySelector('.row-note-textarea') as HTMLTextAreaElement;
+      if (ta && ta.value !== text) ta.value = text;
+    } else if (text.trim().length > 0) {
+      // Auto-open the note pane when restoring content.
+      this.openRowNote(rowEl);
+    }
+  }
+
+  /** Returns rows with their note text, for snapshot building. */
+  getRowsWithNotes(): { rowEl: HTMLElement; note: string; panes: { id: number }[] }[] {
+    return this.rowEls.map(rowEl => ({
+      rowEl,
+      note: this.rowNotes.get(rowEl) ?? '',
+      panes: Array.from(rowEl.children)
+        .filter(c => (c as HTMLElement).classList.contains('terminal-pane'))
+        .map(child => {
+          for (const [id, pane] of this.panes) {
+            if (pane.el === child) return { id };
+          }
+          return null;
+        })
+        .filter((p): p is { id: number } => p !== null),
+    })).filter(r => r.panes.length > 0);
+  }
+
+  private attachRowNote(rowEl: HTMLElement) {
+    this.rowNotes.set(rowEl, '');
+    // No floating button — note is triggered via `m` key or right-click menu.
+    // A left-border accent on the row indicates when a note has content.
+  }
+
+  toggleRowNote(rowEl: HTMLElement) {
+    const existing = rowEl.querySelector('.row-note-pane') as HTMLElement | null;
+    existing ? this._closeNotePaneEl(rowEl, existing) : this.openRowNote(rowEl);
+  }
+
+  openRowNote(rowEl: HTMLElement) {
+    if (rowEl.querySelector('.row-note-pane')) {
+      // Already open — just focus the textarea
+      (rowEl.querySelector('.row-note-textarea') as HTMLTextAreaElement)?.focus();
+      return;
+    }
+
+    const noteWidth = configContext.get().waterfall.note_width ?? 280;
+
+    const pane = document.createElement('div');
+    pane.className = 'row-note-pane';
+    pane.style.flex = `0 0 ${noteWidth}px`;
+    pane.innerHTML = `
+      <div class="row-note-header">
+        <span class="row-note-title">note</span>
+        <span class="row-note-spacer"></span>
+        <button class="row-note-close" tabindex="-1">✕</button>
+      </div>
+      <div class="row-note-body">
+        <textarea class="row-note-textarea" placeholder="Add a note…" spellcheck="false"></textarea>
+      </div>`;
+
+    // Keep notes pinned at the far right edge of the row.
+    const handle = this._createResizeHandle('note');
+    rowEl.appendChild(handle);
+    rowEl.appendChild(pane);
+    this.refreshRowLayout(rowEl);
+    this.recalcRowHeights();
+
+    const ta = pane.querySelector('.row-note-textarea') as HTMLTextAreaElement;
+    ta.value = this.rowNotes.get(rowEl) ?? '';
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+
+    ta.addEventListener('input', () => {
+      this.rowNotes.set(rowEl, ta.value);
+      this._syncNoteBtn(rowEl, ta.value);
+    });
+
+    ta.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Escape') this._closeNotePaneEl(rowEl, pane);
+    });
+
+    pane.querySelector('.row-note-close')?.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      this._closeNotePaneEl(rowEl, pane);
+    });
+
+    pane.addEventListener('mousedown', (e) => e.stopPropagation());
+  }
+
+  private _closeNotePaneEl(rowEl: HTMLElement, pane: HTMLElement) {
+    const ta = pane.querySelector('.row-note-textarea') as HTMLTextAreaElement;
+    const text = ta?.value ?? '';
+    this.rowNotes.set(rowEl, text);
+    this._syncNoteBtn(rowEl, text);
+    // Keep the pane visible if it has content — only truly close when empty.
+    if (text.trim().length > 0) {
+      document.dispatchEvent(new CustomEvent('focus-inputbar'));
+      return;
+    }
+    // Remove associated resize handle (immediately preceding sibling)
+    const prev = pane.previousElementSibling;
+    if (prev?.classList.contains('pane-resize-handle')) prev.remove();
+    pane.remove();
+    this.refreshRowLayout(rowEl);
+    this.recalcRowHeights();
+    document.dispatchEvent(new CustomEvent('focus-inputbar'));
+  }
+
+  private _syncNoteBtn(_rowEl: HTMLElement, _text: string) {
+    // No-op: note pane itself is the visual indicator.
+  }
+
+  private getTerminalPanes(rowEl: HTMLElement): HTMLElement[] {
+    return Array.from(rowEl.children).filter(
+      c => (c as HTMLElement).classList.contains('terminal-pane')
+    ) as HTMLElement[];
+  }
+
+  private refreshRowLayout(rowEl: HTMLElement) {
+    for (const pane of this.getTerminalPanes(rowEl)) {
+      pane.style.flex = '1 1 0';
+    }
+    this._syncPaneResizeHandles(rowEl);
+  }
+
+  private estimatePaneSize(rowEl: HTMLElement, nextTerminalCount: number): { cols: number; rows: number } {
+    const cfg = configContext.get();
+    const charW = Math.max(cfg.font.size * 0.6, 1);
+    const charH = Math.max(cfg.font.size * 1.2, 1);
+    const notePane = rowEl.querySelector('.row-note-pane') as HTMLElement | null;
+    const noteWidth = notePane
+      ? Math.round(notePane.getBoundingClientRect().width) || (cfg.waterfall.note_width ?? 0)
+      : 0;
+    const handleCount = Math.max(0, nextTerminalCount - 1) + (notePane ? 1 : 0);
+    const rowWidth = rowEl.clientWidth || this.el.clientWidth || window.innerWidth;
+    const fallbackRowCount = Math.max(this.rowEls.length, 1);
+    const fallbackGap = fallbackRowCount > 1 ? WATERFALL_ROW_GAP * (fallbackRowCount - 1) : 0;
+    const fallbackOuterHeight = Math.round(parseFloat(rowEl.style.height || '0'))
+      || Math.max(Math.floor((this.el.clientHeight - fallbackGap) / fallbackRowCount), 1);
+    const rowInnerHeight = rowEl.clientHeight
+      || Math.max(fallbackOuterHeight - ROW_BORDER_Y, 1);
+    const paneWidth = Math.max(
+      Math.floor((rowWidth - noteWidth - handleCount * PANE_RESIZE_HANDLE_WIDTH) / Math.max(nextTerminalCount, 1)),
+      1,
+    );
+    const termWidth = Math.max(paneWidth - TERM_PADDING_X, 1);
+    const termHeight = Math.max(rowInnerHeight - PANE_HEADER_HEIGHT - TERM_PADDING_Y, 1);
+
+    return {
+      cols: Math.max(Math.floor(termWidth / charW), MIN_PTY_COLS),
+      rows: Math.max(Math.floor(termHeight / charH), MIN_PTY_ROWS),
+    };
+  }
+
+  /** Create a drag-resize handle element.
+   *
+   *  'note'  — sits left of the note pane; dragging it resizes the note pane
+   *            AND the immediately adjacent terminal pane to its left so the
+   *            row never overflows.
+   *  'pane'  — sits between two terminal panes; dragging resizes both.
+   *
+   *  Widths are captured at mousedown from the live layout, so this is
+   *  safe to call before or after the browser has performed layout.
+   */
+  private _createResizeHandle(role: 'note' | 'pane'): HTMLElement {
+    const handle = document.createElement('div');
+    handle.className = 'pane-resize-handle';
+    handle.dataset.role = role;
+
+    handle.addEventListener('mousedown', (startEvt) => {
+      startEvt.preventDefault();
+      startEvt.stopPropagation();
+
+      const startX = startEvt.clientX;
+      const minWidth = configContext.get().waterfall.pane_min_width ?? 150;
+
+      if (role === 'note') {
+        // Note pane is to the RIGHT of this handle.
+        // The terminal pane immediately to the LEFT absorbs the size change.
+        const notePane = handle.nextElementSibling as HTMLElement | null;
+        const termPane = handle.previousElementSibling as HTMLElement | null;
+        if (!notePane || !termPane) return;
+
+        // Capture current widths from live layout
+        const startNoteW = notePane.getBoundingClientRect().width;
+        const startTermW = termPane.getBoundingClientRect().width;
+        const total = startNoteW + startTermW;
+
+        // Pin both to explicit px so flex: 1 doesn't resist the drag
+        notePane.style.flex = `0 0 ${startNoteW}px`;
+        termPane.style.flex = `0 0 ${startTermW}px`;
+
+        const onMove = (e: MouseEvent) => {
+          // Dragging right grows the terminal and shrinks the note, while
+          // keeping the pair width constant so the row never leaves a gap.
+          const delta = e.clientX - startX;
+          const newTermW = Math.max(minWidth, Math.min(total - minWidth, Math.round(startTermW + delta)));
+          const newNoteW = total - newTermW;
+          termPane.style.flex = `0 0 ${newTermW}px`;
+          notePane.style.flex = `0 0 ${newNoteW}px`;
+        };
+        const onUp = () => {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          for (const p of this.panes.values()) p.fit();
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      } else {
+        // Between two terminal panes
+        const leftPane = handle.previousElementSibling as HTMLElement | null;
+        const rightPane = handle.nextElementSibling as HTMLElement | null;
+        if (!leftPane || !rightPane) return;
+
+        // Capture current widths from live layout
+        const startLeftW = leftPane.getBoundingClientRect().width;
+        const startRightW = rightPane.getBoundingClientRect().width;
+        const total = startLeftW + startRightW;
+
+        // Pin both to explicit px
+        leftPane.style.flex = `0 0 ${startLeftW}px`;
+        rightPane.style.flex = `0 0 ${startRightW}px`;
+
+        const onMove = (e: MouseEvent) => {
+          const delta = e.clientX - startX;
+          const newLeftW = Math.max(minWidth, Math.min(total - minWidth, Math.round(startLeftW + delta)));
+          const newRightW = total - newLeftW;
+          leftPane.style.flex = `0 0 ${newLeftW}px`;
+          rightPane.style.flex = `0 0 ${newRightW}px`;
+        };
+        const onUp = () => {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          for (const p of this.panes.values()) p.fit();
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      }
+    });
+
+    return handle;
+  }
+
+  /** Insert pane-to-pane resize handles between all terminal panes in a row.
+   *  Does NOT set explicit widths — panes keep flex: 1 until the user drags. */
+  private _syncPaneResizeHandles(rowEl: HTMLElement) {
+    // Remove existing pane-to-pane handles
+    rowEl.querySelectorAll('.pane-resize-handle[data-role="pane"]').forEach(h => h.remove());
+
+    const termPanes = this.getTerminalPanes(rowEl);
+
+    if (termPanes.length < 2) return;
+
+    // Insert a handle before each terminal pane except the first
+    for (let i = 1; i < termPanes.length; i++) {
+      const handle = this._createResizeHandle('pane');
+      rowEl.insertBefore(handle, termPanes[i]);
+    }
   }
 }

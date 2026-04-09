@@ -9,9 +9,11 @@ import { sessionManager } from '../session/SessionManager';
 import { agentDetector } from '../input/AgentDetector';
 import { modeManager } from '../input/ModeManager';
 import { unmarkAutoNamed } from '../session/AutoNamer';
+import { hintManager } from '../hints/HintManager';
 
 // ── Module-level floating context menu (one singleton shared across panes) ──
 let _ctxMenu: HTMLElement | null = null;
+type WorkspaceScrollModifier = 'meta' | 'control' | 'alt' | 'shift' | 'disabled';
 
 function getCtxMenu(): HTMLElement {
   if (!_ctxMenu) {
@@ -58,12 +60,16 @@ export class TerminalPane {
   readonly paneId: number;
   private term: Terminal;
   private fitAddon: FitAddon;
+  private termContainer!: HTMLElement;
+  private termViewport: HTMLElement | null = null;
   private unlisten: UnlistenFn | null = null;
   private unlistenClose: UnlistenFn | null = null;
   private resizeObserver: ResizeObserver;
   private onClose: (id: number, prevRow: HTMLElement | null) => void;
   private destroyed = false;
   private info: PaneInfo;
+  private workspaceScrollModifier: WorkspaceScrollModifier;
+  private scrollMultiplier: number;
 
 
   constructor(info: PaneInfo, onClose: (id: number, prevRow: HTMLElement | null) => void) {
@@ -74,6 +80,8 @@ export class TerminalPane {
     this.el = this.buildDOM();
 
     const cfg = configContext.get();
+    this.workspaceScrollModifier = this.normalizeScrollModifier(cfg.input.workspace_scroll_modifier);
+    this.scrollMultiplier = Math.max(1, cfg.scrolling.multiplier || 1);
     this.term = new Terminal({
       theme: configContext.getXtermTheme(cfg),
       fontFamily: `'${cfg.font.family}', 'Symbols Nerd Font Mono', 'JetBrains Mono', 'Fira Code', Consolas, monospace`,
@@ -92,8 +100,9 @@ export class TerminalPane {
     // Vi scroll mode: intercept keys before they reach the PTY
     this.term.attachCustomKeyEventHandler((e) => this.handleViKey(e));
 
-    const termContainer = this.el.querySelector('.term-container') as HTMLElement;
-    this.term.open(termContainer);
+    this.termContainer = this.el.querySelector('.term-container') as HTMLElement;
+    this.term.open(this.termContainer);
+    this.termViewport = this.termContainer.querySelector('.xterm-viewport');
     this.term.blur(); // no cursor until Terminal mode is entered via enterDirectMode()
     // fit() is intentionally NOT called here — the element is not yet in the DOM.
     // WaterfallArea calls fit() after appendChild.
@@ -105,13 +114,17 @@ export class TerminalPane {
 
     // Handle resize
     this.resizeObserver = new ResizeObserver(() => this.fit());
-    this.resizeObserver.observe(termContainer);
+    this.resizeObserver.observe(this.termContainer);
+    this.termContainer.addEventListener('wheel', this.handleContainerWheel, { passive: false, capture: true });
+    this.term.attachCustomWheelEventHandler(this.handleWheel);
 
     // subscribeToEvents() is NOT called here — WaterfallArea.spawnPane awaits
     // it explicitly so the pty-closed listener is registered before returning.
 
     // Config changes
     configContext.onChange((cfg) => {
+      this.workspaceScrollModifier = this.normalizeScrollModifier(cfg.input.workspace_scroll_modifier);
+      this.scrollMultiplier = Math.max(1, cfg.scrolling.multiplier || 1);
       this.term.options.theme       = configContext.getXtermTheme(cfg);
       this.term.options.fontSize    = cfg.font.size;
       this.term.options.fontFamily  = `'${cfg.font.family}', 'Symbols Nerd Font Mono', 'JetBrains Mono', 'Fira Code', Consolas, monospace`;
@@ -131,7 +144,7 @@ export class TerminalPane {
     // input bar is ready. Raw Terminal mode (Ctrl+\) is still entered explicitly.
     this.el.addEventListener('mousedown', (e) => {
       const target = e.target as HTMLElement;
-      if (target.closest('.pane-close, .pane-note-btn, .pane-note-strip')) return;
+      if (target.closest('.pane-close')) return;
       sessionManager.setActivePane(this.paneId);
       if (!target.closest('.pane-header')) {
         modeManager.enterTerminal(this.paneId);
@@ -154,18 +167,7 @@ export class TerminalPane {
         <span class="pane-agent-badge"></span>
         <span class="pane-spacer"></span>
         <span class="pane-cwd"></span>
-        <button class="pane-note-btn" tabindex="-1" title="Note (m)">
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect x="1" y="1" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
-            <line x1="3" y1="4" x2="9" y2="4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
-            <line x1="3" y1="6.5" x2="9" y2="6.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
-            <line x1="3" y1="9" x2="6.5" y2="9" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
-          </svg>
-        </button>
         <button class="pane-close" tabindex="-1">✕</button>
-      </div>
-      <div class="pane-note-strip" style="display:none">
-        <textarea class="pane-note-textarea" placeholder="Add a note… (Esc to save)" spellcheck="false" readonly></textarea>
       </div>
       <div class="term-container"></div>
     `;
@@ -173,15 +175,11 @@ export class TerminalPane {
     // Populate user-controlled fields safely
     const nameEl2 = el.querySelector('.pane-name') as HTMLElement;
     nameEl2.textContent = this.info.name;
-    // Double-click pane name → rename
+    // Double-click pane name → inline rename
     nameEl2.addEventListener('dblclick', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const name = prompt('Rename session:', this.info.name);
-      if (name?.trim()) {
-        sessionManager.renamePane(this.paneId, name.trim());
-        unmarkAutoNamed(this.paneId);
-      }
+      this.startInlineRename(nameEl2);
     });
     // Right-click pane header → context menu
     const header = el.querySelector('.pane-header') as HTMLElement;
@@ -200,11 +198,11 @@ export class TerminalPane {
         {
           label: 'Rename…',
           action: () => {
-            const name = prompt('Rename session:', this.info.name);
-            if (name?.trim()) { sessionManager.renamePane(this.paneId, name.trim()); unmarkAutoNamed(this.paneId); }
+            const nameEl = this.el.querySelector('.pane-name') as HTMLElement;
+            this.startInlineRename(nameEl);
           },
         },
-        { label: 'Note…', action: () => this.openNote() },
+        { label: 'Note…', action: () => document.dispatchEvent(new CustomEvent('open-pane-note')) },
         { label: 'Close', action: () => this.destroy(), danger: true },
       ]);
     });
@@ -214,78 +212,7 @@ export class TerminalPane {
     cwdEl.textContent = this.shortenPath(this.info.cwd);
     cwdEl.setAttribute('title', this.info.cwd);
 
-    const noteBtn   = el.querySelector('.pane-note-btn')     as HTMLButtonElement;
-    const noteStrip = el.querySelector('.pane-note-strip')   as HTMLElement;
-    const noteTA    = el.querySelector('.pane-note-textarea') as HTMLTextAreaElement;
-
-    noteTA.value = this.info.note ?? '';
-    this.syncNoteUI(noteBtn, noteStrip, noteTA.value, false);
-
-    noteBtn.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      noteStrip.classList.contains('editing')
-        ? this.closeNoteEditor(noteBtn, noteStrip, noteTA)
-        : this.openNoteEditor(noteBtn, noteStrip, noteTA);
-    });
-
-    // Click the read-only strip to edit
-    noteStrip.addEventListener('mousedown', (e) => {
-      e.stopPropagation();
-      if (!noteStrip.classList.contains('editing')) {
-        this.openNoteEditor(noteBtn, noteStrip, noteTA);
-      }
-    });
-
-    noteTA.addEventListener('keydown', (e) => {
-      e.stopPropagation();
-      if (e.key === 'Escape') this.closeNoteEditor(noteBtn, noteStrip, noteTA);
-    });
-
-    noteTA.addEventListener('blur', () => {
-      setTimeout(() => {
-        if (document.activeElement !== noteTA) {
-          this.closeNoteEditor(noteBtn, noteStrip, noteTA);
-        }
-      }, 120);
-    });
-
     return el;
-  }
-
-  openNote() {
-    const noteBtn   = this.el.querySelector('.pane-note-btn')     as HTMLButtonElement;
-    const noteStrip = this.el.querySelector('.pane-note-strip')   as HTMLElement;
-    const noteTA    = this.el.querySelector('.pane-note-textarea') as HTMLTextAreaElement;
-    this.openNoteEditor(noteBtn, noteStrip, noteTA);
-  }
-
-  private openNoteEditor(btn: HTMLButtonElement, strip: HTMLElement, ta: HTMLTextAreaElement) {
-    strip.style.display = 'flex';
-    strip.classList.add('editing');
-    ta.readOnly = false;
-    ta.focus();
-    ta.setSelectionRange(ta.value.length, ta.value.length);
-    btn.classList.add('has-note');
-    // note is now an absolute overlay — no layout reflow needed
-  }
-
-  private closeNoteEditor(btn: HTMLButtonElement, strip: HTMLElement, ta: HTMLTextAreaElement) {
-    strip.classList.remove('editing');
-    ta.readOnly = true;
-    const hasContent = ta.value.trim().length > 0;
-    strip.style.display = hasContent ? 'flex' : 'none';
-    btn.classList.toggle('has-note', hasContent);
-    sessionManager.setPaneNote(this.paneId, ta.value).catch(console.error);
-    // Return focus to the InputBar so Normal mode keys work immediately
-    document.dispatchEvent(new CustomEvent('focus-inputbar'));
-  }
-
-  private syncNoteUI(btn: HTMLButtonElement, strip: HTMLElement, text: string, editing: boolean) {
-    const hasContent = text.trim().length > 0;
-    strip.style.display = (hasContent || editing) ? 'flex' : 'none';
-    strip.classList.toggle('editing', editing);
-    btn.classList.toggle('has-note', hasContent);
   }
 
   private shortenPath(p: string): string {
@@ -344,6 +271,59 @@ export class TerminalPane {
     });
   }
 
+  /** Begin inline rename on the pane name element. */
+  startInlineRename(nameEl: HTMLElement) {
+    if (nameEl.contentEditable === 'true') return; // already editing
+    const original = this.info.name;
+    nameEl.contentEditable = 'true';
+    nameEl.classList.add('renaming');
+    nameEl.focus();
+    // Select all text
+    const range = document.createRange();
+    range.selectNodeContents(nameEl);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+
+    const commit = () => {
+      const newName = (nameEl.textContent ?? '').trim();
+      nameEl.contentEditable = 'false';
+      nameEl.classList.remove('renaming');
+      if (newName && newName !== original) {
+        sessionManager.renamePane(this.paneId, newName);
+        unmarkAutoNamed(this.paneId);
+      } else {
+        nameEl.textContent = original; // revert if empty or unchanged
+      }
+    };
+
+    const cleanup = () => {
+      nameEl.removeEventListener('keydown', onKey);
+      nameEl.removeEventListener('blur', onBlur);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      // Always stop propagation so Normal-mode handlers don't see these keystrokes.
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); cleanup(); commit(); }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        cleanup();
+        nameEl.textContent = original;
+        nameEl.contentEditable = 'false';
+        nameEl.classList.remove('renaming');
+      }
+    };
+    const onBlur = () => { cleanup(); commit(); };
+    nameEl.addEventListener('keydown', onKey);
+    nameEl.addEventListener('blur', onBlur);
+  }
+
+  /** Public entry point for external callers (keybinding manager). */
+  startRename() {
+    const nameEl = this.el.querySelector('.pane-name') as HTMLElement;
+    this.startInlineRename(nameEl);
+  }
+
   updateInfo(info: PaneInfo) {
     this.info = info;
     const nameEl = this.el.querySelector('.pane-name') as HTMLElement;
@@ -359,15 +339,6 @@ export class TerminalPane {
     dotEl.dataset.status = info.status;
     agentEl.textContent = info.agent_type !== 'none' ? info.agent_type : '';
     agentEl.dataset.agent = info.agent_type;
-
-    // Sync note strip (don't overwrite textarea while user is actively editing)
-    const noteBtn   = this.el.querySelector('.pane-note-btn')     as HTMLButtonElement;
-    const noteStrip = this.el.querySelector('.pane-note-strip')   as HTMLElement;
-    const noteTA    = this.el.querySelector('.pane-note-textarea') as HTMLTextAreaElement;
-    if (!noteStrip.classList.contains('editing')) {
-      noteTA.value = info.note ?? '';
-      this.syncNoteUI(noteBtn, noteStrip, info.note ?? '', false);
-    }
   }
 
   setActive(active: boolean) {
@@ -416,6 +387,7 @@ export class TerminalPane {
     if (this.destroyed) return;
     this.destroyed = true;
     this.resizeObserver.disconnect();
+    this.termContainer.removeEventListener('wheel', this.handleContainerWheel, true);
     if (this.unlisten) this.unlisten();
     if (this.unlistenClose) this.unlistenClose();
     this.term.dispose();
@@ -444,6 +416,124 @@ export class TerminalPane {
   getInfo(): PaneInfo {
     return this.info;
   }
+
+  private normalizeScrollModifier(value: string | null | undefined): WorkspaceScrollModifier {
+    const normalized = (value ?? '').toLowerCase();
+    switch (normalized) {
+      case 'meta':
+      case 'control':
+      case 'alt':
+      case 'shift':
+      case 'disabled':
+        return normalized as WorkspaceScrollModifier;
+      default:
+        return 'meta';
+    }
+  }
+
+  private shouldRouteWheelToWorkspace(e: WheelEvent): boolean {
+    switch (this.workspaceScrollModifier) {
+      case 'meta':
+        return e.metaKey;
+      case 'control':
+        return e.ctrlKey;
+      case 'alt':
+        return e.altKey;
+      case 'shift':
+        return e.shiftKey;
+      case 'disabled':
+      default:
+        return false;
+    }
+  }
+
+  private wheelDeltaToPixels(e: WheelEvent): number {
+    if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+      return e.deltaY * this.term.options.fontSize! * 1.2;
+    }
+    if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+      const workspace = this.el.closest('.waterfall-area') as HTMLElement | null;
+      return e.deltaY * (workspace?.clientHeight || window.innerHeight);
+    }
+    return e.deltaY;
+  }
+
+  private scrollTerminalViewport(deltaPixels: number) {
+    const viewport = this.termViewport ?? this.termContainer.querySelector('.xterm-viewport');
+    if (viewport instanceof HTMLElement) {
+      this.termViewport = viewport;
+      viewport.scrollTop += deltaPixels;
+      return;
+    }
+    const approxLineHeight = Math.max(1, (this.term.options.fontSize ?? 13) * 1.2);
+    const lines = deltaPixels / approxLineHeight;
+    if (Math.abs(lines) < 1) {
+      this.term.scrollLines(deltaPixels > 0 ? 1 : -1);
+      return;
+    }
+    this.term.scrollLines(lines > 0 ? Math.floor(lines) : Math.ceil(lines));
+  }
+
+  private routeWheel(e: WheelEvent, source: 'container' | 'xterm'): boolean {
+    const deltaPixels = this.wheelDeltaToPixels(e);
+    if (deltaPixels === 0) {
+      return false;
+    }
+
+    const workspace = this.el.closest('.waterfall-area') as HTMLElement | null;
+    if (this.shouldRouteWheelToWorkspace(e)) {
+      if (!workspace) return false;
+      if (sessionManager.getActivePaneId() !== this.paneId) {
+        void sessionManager.setActivePane(this.paneId);
+      }
+      hintManager.record({ type: 'workspace-scroll-used' });
+      document.dispatchEvent(new CustomEvent('workspace-scroll-used'));
+      e.preventDefault();
+      e.stopPropagation();
+      workspace.scrollBy({
+        top: deltaPixels * this.scrollMultiplier,
+        behavior: 'auto',
+      });
+      return false;
+    }
+
+    // Leave alternate-screen apps (vim, tmux full-screen UIs, etc.) on xterm's
+    // native path so wheel input still reaches the PTY as expected, but only
+    // when the event actually occurred inside xterm's own DOM. Container
+    // padding/edges should never leak out to the workspace.
+    if (this.term.buffer.active.type === 'alternate') {
+      if (source === 'xterm') {
+        return true;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      return false;
+    }
+
+    hintManager.record({ type: 'terminal-wheel', withModifier: false });
+    e.preventDefault();
+    e.stopPropagation();
+    this.scrollTerminalViewport(deltaPixels);
+    return false;
+  }
+
+  private handleContainerWheel = (e: WheelEvent) => {
+    const target = e.target instanceof HTMLElement ? e.target : null;
+    const inXterm = !!target?.closest('.xterm');
+
+    // Full-screen terminal apps should keep xterm's native wheel handling so
+    // scroll is translated into PTY input. Everything else inside the terminal
+    // container is handled here first so it can never leak to the workspace.
+    if (inXterm && this.term.buffer.active.type === 'alternate' && !this.shouldRouteWheelToWorkspace(e)) {
+      return;
+    }
+
+    this.routeWheel(e, inXterm ? 'xterm' : 'container');
+  };
+
+  private handleWheel = (e: WheelEvent): boolean => {
+    return this.routeWheel(e, 'xterm');
+  };
 
   // All keys in terminal mode pass through to the PTY.
   private handleViKey(_e: KeyboardEvent): boolean {

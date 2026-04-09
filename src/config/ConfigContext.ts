@@ -15,7 +15,7 @@ export interface AppConfig {
   scrolling: { history: number; multiplier: number };
   shell: { program: string; args: string[] };
   keybindings: Array<{ key: string; mods: string | null; action: string }>;
-  input: { live_typing: boolean };
+  input: { live_typing: boolean; workspace_scroll_modifier: string };
   workspace_ai: {
     /** anthropic | openai | google | ollama | claude-cli | none  (inferred from model if omitted) */
     provider: string | null;
@@ -28,7 +28,7 @@ export interface AppConfig {
     always_confirm_broadcast: boolean;
     always_confirm_multi_step: boolean;
   };
-  waterfall: { row_height_mode: string; fixed_row_height: number; scroll_snap: boolean; new_pane_focus: boolean };
+  waterfall: { row_height_mode: string; fixed_row_height: number; scroll_snap: boolean; new_pane_focus: boolean; note_width: number; pane_min_width: number };
   persistence: { keep_alive: boolean; scrollback_lines: number; save_scrollback_on_exit: boolean };
 }
 

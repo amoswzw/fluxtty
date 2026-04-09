@@ -9,6 +9,8 @@
     "core:default",
     "core:event:default",
     "core:window:default",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
     "core:app:default",
     "core:tray:default"
   ]

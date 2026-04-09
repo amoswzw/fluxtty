@@ -238,3 +238,4 @@ The waterfall layout idea — terminals stacking vertically, each filling the vi
 ## License
 
 MIT
+

@@ -10,6 +10,7 @@ import { modeManager } from './input/ModeManager';
 import { setWaterfallArea } from './ai/ai-handler';
 import { setPlanWaterfallArea, setPlanLogFn } from './ai/plan-executor';
 import { SettingsPanel } from './settings/SettingsPanel';
+import { OnboardingOverlay } from './help/OnboardingOverlay';
 
 interface PaneSnapshot {
   name: string;
@@ -29,7 +30,8 @@ interface WorkspaceSnapshot {
 export async function initApp(root: HTMLElement) {
   // Detect platform and tag <html> so CSS can apply platform-specific rules
   const ua = navigator.userAgent;
-  if (ua.includes('Macintosh'))  document.documentElement.classList.add('platform-macos');
+  const isMac = ua.includes('Macintosh');
+  if (isMac)  document.documentElement.classList.add('platform-macos');
   else if (ua.includes('Windows')) document.documentElement.classList.add('platform-windows');
   else                             document.documentElement.classList.add('platform-linux');
 
@@ -48,7 +50,7 @@ export async function initApp(root: HTMLElement) {
   root.appendChild(appEl);
 
   // Header
-  const header = buildHeader();
+  const header = buildHeader(isMac);
   appEl.appendChild(header);
 
   // Main area (sidebar + waterfall)
@@ -66,6 +68,10 @@ export async function initApp(root: HTMLElement) {
   // Settings panel
   const settingsPanel = new SettingsPanel();
   appEl.appendChild(settingsPanel.el);
+
+  // Guide / onboarding overlay
+  const onboardingOverlay = new OnboardingOverlay(isMac);
+  appEl.appendChild(onboardingOverlay.el);
 
   // Input bar
   const inputBar = new InputBar(appEl);
@@ -89,10 +95,8 @@ export async function initApp(root: HTMLElement) {
   header.querySelector('#btn-settings')?.addEventListener('click', () => {
     settingsPanel.toggle();
   });
-
-  // Ctrl+, opens settings
-  document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && e.key === ',') { e.preventDefault(); settingsPanel.toggle(); }
+  header.querySelector('#btn-help')?.addEventListener('click', () => {
+    onboardingOverlay.showCheatSheet();
   });
 
   // Wire mode changes → terminal focus/unfocus
@@ -110,9 +114,18 @@ export async function initApp(root: HTMLElement) {
 
   // Keybindings
   const appWindow = getCurrentWindow();
+  const syncWindowChromeState = async () => {
+    if (!isMac) return;
+    const fullscreen = await appWindow.isFullscreen().catch(() => false);
+    document.documentElement.classList.toggle('window-fullscreen', fullscreen);
+  };
+  void syncWindowChromeState();
+  void appWindow.onResized(() => { void syncWindowChromeState(); });
+
   keybindingManager.init({
     waterfallArea,
     sidebar,
+    openSettings: () => settingsPanel.toggle(),
     quit: () => void appWindow.close(),
   });
 
@@ -129,7 +142,15 @@ export async function initApp(root: HTMLElement) {
     } catch (e) {
       console.error('Failed to save workspace snapshot:', e);
     }
-    void appWindow.destroy();
+    try {
+      await appWindow.destroy();
+    } catch (e) {
+      console.error('Failed to destroy window:', e);
+      // Last resort: try close() which will re-emit closeRequested,
+      // but at this point keep_alive check will still pass — so guard
+      // against infinite loop by temporarily relying on the OS to close.
+      await appWindow.close().catch(() => {});
+    }
   });
 
   // Session count in header
@@ -169,24 +190,34 @@ export async function initApp(root: HTMLElement) {
       inputBar.focus();
     });
   });
+
+  requestAnimationFrame(() => {
+    onboardingOverlay.showQuickStartIfNeeded(restored);
+  });
 }
 
 // ── Snapshot helpers ──────────────────────────────────────────────────────
 
-/** Build a snapshot from the current DOM layout order (ground truth for visual position). */
+/** Build a snapshot from the current DOM layout order (ground truth for visual position).
+ *
+ *  Reads info from TerminalPane.getInfo() rather than sessionManager to avoid a
+ *  race where Rust kills PTYs during shutdown and fires session:changed (clearing
+ *  sessionManager.panes) before onCloseRequested fires. */
 function buildSnapshot(waterfallArea: WaterfallArea): WorkspaceSnapshot {
   const activeId = sessionManager.getActivePaneId();
-  const domRows = waterfallArea.getPanesByDOMRow();
+  const rows = waterfallArea.getRowsWithNotes();
   const panes: PaneSnapshot[] = [];
-  for (let rowIdx = 0; rowIdx < domRows.length; rowIdx++) {
-    const row = domRows[rowIdx];
-    for (let paneIdx = 0; paneIdx < row.length; paneIdx++) {
-      const info = sessionManager.getPane(row[paneIdx].id);
-      if (!info) continue;
+  for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+    const { note: rowNote, panes: rowPanes } = rows[rowIdx];
+    for (let paneIdx = 0; paneIdx < rowPanes.length; paneIdx++) {
+      const pane = waterfallArea.getPane(rowPanes[paneIdx].id);
+      if (!pane) continue;
+      const info = pane.getInfo();
       panes.push({
         name: info.name,
         group: info.group,
-        note: info.note,
+        // Store row note only on first pane in row; other panes leave it empty.
+        note: paneIdx === 0 ? rowNote : '',
         cwd: info.cwd,
         row_index: rowIdx,
         pane_index: paneIdx,
@@ -227,11 +258,17 @@ async function restoreSnapshot(snapshot: WorkspaceSnapshot, waterfallArea: Water
     // Restore metadata that the PTY spawn doesn't carry.
     const renames: Promise<void>[] = [];
     if (snap.name) renames.push(sessionManager.renamePane(pane.paneId, snap.name).catch(console.error));
-    if (snap.note) renames.push(sessionManager.setPaneNote(pane.paneId, snap.note).catch(console.error));
     if (snap.group && snap.group !== 'default') {
       renames.push(sessionManager.setPaneGroup(pane.paneId, snap.group).catch(console.error));
     }
     await Promise.all(renames);
+
+    // Restore row note (stored only on the first pane per row).
+    if (snap.pane_index === 0 && snap.note) {
+      const rowEls = waterfallArea.getRowsWithNotes();
+      const rowData = rowEls[domRowIdx];
+      if (rowData) waterfallArea.setRowNote(rowData.rowEl, snap.note);
+    }
 
     if (snap.is_active) {
       await sessionManager.setActivePane(pane.paneId);
@@ -239,7 +276,8 @@ async function restoreSnapshot(snapshot: WorkspaceSnapshot, waterfallArea: Water
   }
 }
 
-function buildHeader(): HTMLElement {
+function buildHeader(isMac: boolean): HTMLElement {
+  const settingsShortcut = isMac ? 'Cmd+,' : 'Ctrl+,';
   const header = document.createElement('div');
   header.className = 'app-header';
   header.innerHTML = `
@@ -247,10 +285,11 @@ function buildHeader(): HTMLElement {
     <div class="header-logo">fluxtty</div>
     <div class="header-session-count">0 sessions</div>
     <div class="header-spacer"></div>
-    <button class="header-btn" id="btn-new" title="New terminal (Ctrl+N)">+ New</button>
-    <button class="header-btn" id="btn-split" title="Split (Ctrl+H)">Split</button>
-    <button class="header-btn" id="btn-sessions" title="Sessions (Ctrl+B)">Sessions</button>
-    <button class="header-btn" id="btn-settings" title="Settings (Ctrl+,)">Settings</button>
+    <button class="header-btn" id="btn-new" title="New terminal (Ctrl+N)">＋ New</button>
+    <button class="header-btn" id="btn-split" title="Split (Ctrl+H)">⊟ Split</button>
+    <button class="header-btn" id="btn-sessions" title="Sessions (Ctrl+B)">≡ Sessions</button>
+    <button class="header-btn" id="btn-help" title="Quick start and shortcuts">? Help</button>
+    <button class="header-btn" id="btn-settings" title="Settings (${settingsShortcut})">⚙ Settings</button>
   `;
   return header;
 }
