@@ -5,11 +5,11 @@ import type { WaterfallArea } from '../waterfall/WaterfallArea';
 import { modeManager } from '../input/ModeManager';
 import { sessionManager } from '../session/SessionManager';
 import type { SessionSidebar } from '../sidebar/SessionSidebar';
-import { unmarkAutoNamed } from '../session/AutoNamer';
 
 interface ActionHandlers {
   waterfallArea: WaterfallArea;
   sidebar: SessionSidebar;
+  openSettings: () => void;
   quit: () => void;
 }
 
@@ -18,7 +18,9 @@ export class KeybindingManager {
 
   init(handlers: ActionHandlers) {
     this.handlers = handlers;
-    document.addEventListener('keydown', (e) => this.dispatch(e));
+    // Capture phase makes app-level shortcuts available even when an xterm
+    // textarea currently owns focus in terminal mode.
+    document.addEventListener('keydown', (e) => this.dispatch(e), true);
     // Normal-mode vi keys dispatch this event instead of calling executeAction directly
     document.addEventListener('workspace-action', (e: Event) => {
       this.executeAction((e as CustomEvent<string>).detail);
@@ -27,11 +29,19 @@ export class KeybindingManager {
 
   private dispatch(e: KeyboardEvent) {
     if (!this.handlers) return;
-    const mode = modeManager.getMode();
 
-    // In terminal mode, xterm.js handles all input natively.
-    // Ctrl+\ (toggle back to normal) is handled by InputBar's global handler.
-    if (mode.type === 'terminal') {
+    // App-level macOS shortcuts — active anywhere inside this app window,
+    // including terminal mode.
+    if (e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+      if (e.key === 'q') { e.preventDefault(); this.executeAction('Quit'); return; }
+      if (e.key === 'w') { e.preventDefault(); this.executeAction('ClosePane'); return; }
+      if (e.key === ',') { e.preventDefault(); this.executeAction('OpenSettings'); return; }
+    }
+
+    // Non-mac fallback for settings, also active in terminal mode.
+    if (e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.key === ',') {
+      e.preventDefault();
+      this.executeAction('OpenSettings');
       return;
     }
 
@@ -52,10 +62,12 @@ export class KeybindingManager {
 
       const mods = (kb.mods || '').split('|').map(m => m.trim().toLowerCase());
       const ctrl = mods.includes('control');
+      const meta = mods.includes('meta');
       const shift = mods.includes('shift');
       const alt = mods.includes('alt');
 
       if (ctrl !== e.ctrlKey) continue;
+      if (meta !== e.metaKey) continue;
       if (shift !== e.shiftKey) continue;
       if (alt !== e.altKey) continue;
 
@@ -66,7 +78,7 @@ export class KeybindingManager {
 
   private executeAction(action: string) {
     if (!this.handlers) return;
-    const { waterfallArea, sidebar, quit } = this.handlers;
+    const { waterfallArea, sidebar, openSettings, quit } = this.handlers;
 
     switch (action) {
       case 'NewTerminal':
@@ -89,6 +101,9 @@ export class KeybindingManager {
       }
       case 'ToggleSidebar':
         sidebar.toggle();
+        break;
+      case 'OpenSettings':
+        openSettings();
         break;
       case 'ToggleInputMode':
         modeManager.toggle();
@@ -146,11 +161,7 @@ export class KeybindingManager {
       case 'RenameCurrentSession': {
         const pane = waterfallArea.getActivePane();
         if (!pane) break;
-        const name = prompt('Rename session:', pane.getInfo().name);
-        if (name && name.trim()) {
-          sessionManager.renamePane(pane.paneId, name.trim());
-          unmarkAutoNamed(pane.paneId); // user took control of this name
-        }
+        pane.startRename();
         break;
       }
       case 'GroupCurrentSession': {

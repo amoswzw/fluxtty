@@ -115,6 +115,11 @@ pub struct InputConfig {
     /// When true, every keystroke in Insert mode is forwarded to the PTY immediately
     /// instead of waiting for Enter. The shell handles echo and line editing.
     pub live_typing: bool,
+    /// Which modifier key reroutes wheel scrolling from the terminal to the
+    /// workspace container.
+    /// One of: meta | control | alt | shift | disabled.
+    #[serde(alias = "terminal_scroll_modifier")]
+    pub workspace_scroll_modifier: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,6 +146,8 @@ pub struct WaterfallConfig {
     pub fixed_row_height: u32,
     pub scroll_snap: bool,
     pub new_pane_focus: bool,
+    pub note_width: u32,
+    pub pane_min_width: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -307,19 +314,24 @@ impl Default for ShellConfig {
 }
 
 fn default_keybindings() -> Vec<KeyBinding> {
+    let settings_mod = if cfg!(target_os = "macos") { "Meta" } else { "Control" };
     vec![
         KeyBinding { key: "N".to_string(), mods: Some("Control".to_string()), action: "NewTerminal".to_string() },
         KeyBinding { key: "H".to_string(), mods: Some("Control".to_string()), action: "SplitHorizontal".to_string() },
         KeyBinding { key: "W".to_string(), mods: Some("Control".to_string()), action: "ClosePane".to_string() },
         KeyBinding { key: "B".to_string(), mods: Some("Control".to_string()), action: "ToggleSidebar".to_string() },
         KeyBinding { key: "\\".to_string(), mods: Some("Control".to_string()), action: "ToggleInputMode".to_string() },
+        KeyBinding { key: ",".to_string(), mods: Some(settings_mod.to_string()), action: "OpenSettings".to_string() },
         KeyBinding { key: "Q".to_string(), mods: Some("Control".to_string()), action: "Quit".to_string() },
     ]
 }
 
 impl Default for InputConfig {
     fn default() -> Self {
-        InputConfig { live_typing: true }
+        InputConfig {
+            live_typing: true,
+            workspace_scroll_modifier: "meta".to_string(),
+        }
     }
 }
 
@@ -344,6 +356,8 @@ impl Default for WaterfallConfig {
             fixed_row_height: 40,
             scroll_snap: false,
             new_pane_focus: true,
+            note_width: 280,
+            pane_min_width: 150,
         }
     }
 }
