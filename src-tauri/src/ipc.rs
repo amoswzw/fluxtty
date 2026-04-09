@@ -517,8 +517,8 @@ pub async fn llm_complete(args: LlmCompleteArgs) -> Result<String, String> {
         "google" => {
             let base = args.base_url.as_deref().unwrap_or("https://generativelanguage.googleapis.com");
             let url = format!(
-                "{}/v1beta/models/{}:generateContent?key={}",
-                base.trim_end_matches('/'), model, api_key
+                "{}/v1beta/models/{}:generateContent",
+                base.trim_end_matches('/'), model
             );
 
             let system: Vec<_> = args.messages.iter()
@@ -541,6 +541,7 @@ pub async fn llm_complete(args: LlmCompleteArgs) -> Result<String, String> {
             }
 
             let res = client.post(&url)
+                .header("Authorization", format!("Bearer {}", api_key))
                 .header("content-type", "application/json")
                 .json(&body)
                 .send()
