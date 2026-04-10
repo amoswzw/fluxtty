@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
 export interface AppConfig {
-  window: { opacity: number; padding: { x: number; y: number }; decorations: string; startup_mode: string };
+  window: { opacity: number; padding: { x: number; y: number }; decorations: string; startup_mode: string; compact_mode: boolean };
   font: { family: string; size: number; builtin_box_drawing: boolean };
   colors: {
     primary: { background: string; foreground: string };
@@ -28,7 +28,7 @@ export interface AppConfig {
     always_confirm_broadcast: boolean;
     always_confirm_multi_step: boolean;
   };
-  waterfall: { row_height_mode: string; fixed_row_height: number; scroll_snap: boolean; new_pane_focus: boolean; note_width: number; pane_min_width: number };
+  waterfall: { row_height_mode: string; fixed_row_height: number; scroll_snap: boolean; new_pane_focus: boolean; note_width: number; pane_min_width: number; show_note_button: boolean };
   persistence: { keep_alive: boolean; scrollback_lines: number; save_scrollback_on_exit: boolean };
 }
 
@@ -144,6 +144,13 @@ class ConfigContext {
     root.style.setProperty('--window-padding-x', `${c.window.padding.x}px`);
     root.style.setProperty('--window-padding-y', `${c.window.padding.y}px`);
     root.style.setProperty('--window-opacity', String(c.window.opacity));
+
+    document.body.dataset.showNoteBtn = c.waterfall.show_note_button !== false ? 'true' : 'false';
+    document.body.dataset.compact = c.window.compact_mode ? 'true' : 'false';
+
+    // Recalc terminal layout after any config change (compact mode toggling
+    // changes the visible height; font/padding changes affect row thresholds).
+    requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
 
     // Compute rgba background so CSS can apply opacity without dimming text.
     // Hex must be 6-char (#rrggbb); fall back to opaque if malformed.

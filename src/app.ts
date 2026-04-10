@@ -112,6 +112,16 @@ export async function initApp(root: HTMLElement) {
     }
   });
 
+  // Compact mode: hide/show macOS traffic-light buttons via native NSWindow API.
+  // CSS cannot cover native controls; this uses objc FFI to setHidden on each button.
+  if (isMac) {
+    const applyTrafficLights = (compact: boolean) => {
+      invoke('window_set_traffic_lights_hidden', { hidden: compact }).catch(() => {});
+    };
+    applyTrafficLights(configContext.get().window.compact_mode);
+    configContext.onChange((cfg) => applyTrafficLights(cfg.window.compact_mode));
+  }
+
   // Keybindings
   const appWindow = getCurrentWindow();
   const syncWindowChromeState = async () => {
