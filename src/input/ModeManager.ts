@@ -23,12 +23,12 @@ export class ModeManager {
     this.listeners.forEach(l => l(mode));
   }
 
-  // Ctrl+\: toggle between terminal (raw xterm) and normal
+  // Ctrl+\: normal enters raw terminal; every other mode exits back to normal.
   toggle() {
-    if (this.mode.type === 'terminal') {
-      this.enterNormal();
-    } else {
+    if (this.mode.type === 'normal') {
       this.enterTerminal();
+    } else {
+      this.enterNormal();
     }
   }
 

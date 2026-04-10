@@ -66,10 +66,15 @@ function normalizeHexColor(value: string): string | null {
 }
 
 function syncThemePreview(preview: HTMLElement, cfg: any) {
-  (preview.querySelector('.st-theme-preview-terminal') as HTMLElement).style.background = cfg.colors.primary.background;
+  const shellBg = cfg.window?.transparency_enabled && cfg.window?.shell_background_opaque
+    ? '#000000'
+    : cfg.colors.primary.background;
+  (preview.querySelector('.st-theme-preview-terminal') as HTMLElement).style.background = shellBg;
   (preview.querySelector('.st-theme-preview-terminal') as HTMLElement).style.color = cfg.colors.primary.foreground;
   (preview.querySelector('.st-theme-preview-terminal') as HTMLElement).style.borderColor = cfg.colors.normal.blue;
-  (preview.querySelector('.st-theme-preview-header') as HTMLElement).style.background = cfg.colors.normal.black;
+  (preview.querySelector('.st-theme-preview-header') as HTMLElement).style.background =
+    `color-mix(in srgb, ${cfg.colors.primary.background} 84%, ${cfg.colors.primary.foreground} 16%)`;
+  (preview.querySelector('.st-theme-preview-header') as HTMLElement).style.color = cfg.colors.primary.foreground;
   (preview.querySelector('.st-theme-preview-green') as HTMLElement).style.color = cfg.colors.normal.green;
   (preview.querySelector('.st-theme-preview-blue') as HTMLElement).style.color = cfg.colors.normal.blue;
   (preview.querySelector('.st-theme-preview-red') as HTMLElement).style.color = cfg.colors.normal.red;
@@ -78,7 +83,7 @@ function syncThemePreview(preview: HTMLElement, cfg: any) {
 
 // ── field / section types ─────────────────────────────────────────────────────
 
-type FType = 'text' | 'number' | 'checkbox' | 'color' | 'select' | 'textarea' | 'fontfamily' | 'combobox';
+type FType = 'text' | 'number' | 'range' | 'checkbox' | 'color' | 'select' | 'textarea' | 'fontfamily' | 'combobox';
 
 interface F {
   path: string;
@@ -87,6 +92,7 @@ interface F {
   opts?: Array<string | { value: string; label: string }>; // for select / combobox suggestions
   min?: number; max?: number; step?: number;
   desc?: string;
+  unit?: string;
   read?: (v: any) => string;
   write?: (s: string) => any;
 }
@@ -170,7 +176,6 @@ const KNOWN_MODELS = [
   'ollama/phi4',
 ];
 
-const KNOWN_THEMES = ['', 'default-dark', 'catppuccin-mocha', 'gruvbox-dark', 'solarized-dark'];
 const WORKSPACE_SCROLL_MODIFIER_OPTIONS = [
   { value: 'meta', label: 'Command' },
   { value: 'control', label: 'Control' },
@@ -186,32 +191,183 @@ interface ThemeColors {
   bright:  Record<string, string>;
 }
 
-const THEME_PRESETS: Record<string, ThemeColors> = {
-  'default-dark': {
+type ThemeTone = 'Dark' | 'Light';
+
+interface ThemePreset extends ThemeColors {
+  id: string;
+  label: string;
+  tone: ThemeTone;
+  description: string;
+}
+
+const COLOR_NAMES = ['Black', 'Red', 'Green', 'Yellow', 'Blue', 'Magenta', 'Cyan', 'White'] as const;
+
+const THEME_PRESET_LIST: ThemePreset[] = [
+  {
+    id: 'default-dark',
+    label: 'Fluxtty Dark',
+    tone: 'Dark',
+    description: 'Neutral dark terminal with clean blue accents and high contrast.',
     primary: { background: '#0d1117', foreground: '#e6edf3' },
     cursor:  { text: '#0d1117', cursor: '#e6edf3' },
     normal:  { black: '#484f58', red: '#ff7b72', green: '#3fb950', yellow: '#d29922', blue: '#388bfd', magenta: '#bc8cff', cyan: '#39c5cf', white: '#b1bac4' },
     bright:  { black: '#6e7681', red: '#ffa198', green: '#56d364', yellow: '#e3b341', blue: '#79c0ff', magenta: '#d2a8ff', cyan: '#56d4dd', white: '#f0f6fc' },
   },
-  'catppuccin-mocha': {
+  {
+    id: 'tokyo-night',
+    label: 'Tokyo Night',
+    tone: 'Dark',
+    description: 'Cool navy background with crisp blues and restrained warm accents.',
+    primary: { background: '#1a1b26', foreground: '#c0caf5' },
+    cursor:  { text: '#1a1b26', cursor: '#c0caf5' },
+    normal:  { black: '#414868', red: '#f7768e', green: '#9ece6a', yellow: '#e0af68', blue: '#7aa2f7', magenta: '#bb9af7', cyan: '#7dcfff', white: '#a9b1d6' },
+    bright:  { black: '#565f89', red: '#f7768e', green: '#9ece6a', yellow: '#e0af68', blue: '#7aa2f7', magenta: '#bb9af7', cyan: '#7dcfff', white: '#c0caf5' },
+  },
+  {
+    id: 'nord',
+    label: 'Nord',
+    tone: 'Dark',
+    description: 'Low-fatigue blue-gray palette that stays calm during long sessions.',
+    primary: { background: '#2e3440', foreground: '#d8dee9' },
+    cursor:  { text: '#2e3440', cursor: '#eceff4' },
+    normal:  { black: '#3b4252', red: '#bf616a', green: '#a3be8c', yellow: '#ebcb8b', blue: '#81a1c1', magenta: '#b48ead', cyan: '#88c0d0', white: '#e5e9f0' },
+    bright:  { black: '#4c566a', red: '#bf616a', green: '#a3be8c', yellow: '#ebcb8b', blue: '#81a1c1', magenta: '#b48ead', cyan: '#8fbcbb', white: '#eceff4' },
+  },
+  {
+    id: 'rose-pine-moon',
+    label: 'Rose Pine Moon',
+    tone: 'Dark',
+    description: 'Muted plum and pine accents with softer contrast than a standard dark theme.',
+    primary: { background: '#232136', foreground: '#e0def4' },
+    cursor:  { text: '#232136', cursor: '#e0def4' },
+    normal:  { black: '#393552', red: '#eb6f92', green: '#3e8fb0', yellow: '#f6c177', blue: '#9ccfd8', magenta: '#c4a7e7', cyan: '#ea9a97', white: '#e0def4' },
+    bright:  { black: '#59546d', red: '#eb6f92', green: '#3e8fb0', yellow: '#f6c177', blue: '#9ccfd8', magenta: '#c4a7e7', cyan: '#ea9a97', white: '#f5f5ff' },
+  },
+  {
+    id: 'catppuccin-mocha',
+    label: 'Catppuccin Mocha',
+    tone: 'Dark',
+    description: 'Soft dark palette with creamy contrast and pastel ANSI colors.',
     primary: { background: '#1e1e2e', foreground: '#cdd6f4' },
     cursor:  { text: '#1e1e2e', cursor: '#f5e0dc' },
     normal:  { black: '#45475a', red: '#f38ba8', green: '#a6e3a1', yellow: '#f9e2af', blue: '#89b4fa', magenta: '#f5c2e7', cyan: '#94e2d5', white: '#bac2de' },
     bright:  { black: '#585b70', red: '#f38ba8', green: '#a6e3a1', yellow: '#f9e2af', blue: '#89b4fa', magenta: '#f5c2e7', cyan: '#94e2d5', white: '#a6adc8' },
   },
-  'gruvbox-dark': {
+  {
+    id: 'gruvbox-dark',
+    label: 'Gruvbox Dark',
+    tone: 'Dark',
+    description: 'Warm retro contrast with earthy reds, greens, and amber highlights.',
     primary: { background: '#282828', foreground: '#ebdbb2' },
     cursor:  { text: '#282828', cursor: '#ebdbb2' },
     normal:  { black: '#282828', red: '#cc241d', green: '#98971a', yellow: '#d79921', blue: '#458588', magenta: '#b16286', cyan: '#689d6a', white: '#a89984' },
     bright:  { black: '#928374', red: '#fb4934', green: '#b8bb26', yellow: '#fabd2f', blue: '#83a598', magenta: '#d3869b', cyan: '#8ec07c', white: '#ebdbb2' },
   },
-  'solarized-dark': {
+  {
+    id: 'solarized-dark',
+    label: 'Solarized Dark',
+    tone: 'Dark',
+    description: 'Balanced contrast with the classic Solarized accent set.',
     primary: { background: '#002b36', foreground: '#839496' },
     cursor:  { text: '#002b36', cursor: '#839496' },
     normal:  { black: '#073642', red: '#dc322f', green: '#859900', yellow: '#b58900', blue: '#268bd2', magenta: '#d33682', cyan: '#2aa198', white: '#eee8d5' },
     bright:  { black: '#002b36', red: '#cb4b16', green: '#586e75', yellow: '#657b83', blue: '#839496', magenta: '#6c71c4', cyan: '#93a1a1', white: '#fdf6e3' },
   },
-};
+  {
+    id: 'default-light',
+    label: 'Fluxtty Light',
+    tone: 'Light',
+    description: 'Clean light terminal with strong readability and restrained accents.',
+    primary: { background: '#f6f8fa', foreground: '#24292f' },
+    cursor:  { text: '#f6f8fa', cursor: '#24292f' },
+    normal:  { black: '#24292f', red: '#cf222e', green: '#1a7f37', yellow: '#9a6700', blue: '#0969da', magenta: '#8250df', cyan: '#1b7c83', white: '#57606a' },
+    bright:  { black: '#57606a', red: '#a40e26', green: '#116329', yellow: '#7d4e00', blue: '#0550ae', magenta: '#6639ba', cyan: '#0a676f', white: '#1f2328' },
+  },
+  {
+    id: 'one-light',
+    label: 'One Light',
+    tone: 'Light',
+    description: 'A bright, editor-style palette with vivid but controlled ANSI colors.',
+    primary: { background: '#fafafa', foreground: '#383a42' },
+    cursor:  { text: '#fafafa', cursor: '#383a42' },
+    normal:  { black: '#383a42', red: '#e45649', green: '#50a14f', yellow: '#c18401', blue: '#4078f2', magenta: '#a626a4', cyan: '#0184bc', white: '#a0a1a7' },
+    bright:  { black: '#696c77', red: '#df6c75', green: '#98c379', yellow: '#e5c07b', blue: '#61afef', magenta: '#c678dd', cyan: '#56b6c2', white: '#ffffff' },
+  },
+  {
+    id: 'catppuccin-latte',
+    label: 'Catppuccin Latte',
+    tone: 'Light',
+    description: 'Soft light palette with warm creams and pastel ANSI accents.',
+    primary: { background: '#eff1f5', foreground: '#4c4f69' },
+    cursor:  { text: '#eff1f5', cursor: '#dc8a78' },
+    normal:  { black: '#5c5f77', red: '#d20f39', green: '#40a02b', yellow: '#df8e1d', blue: '#1e66f5', magenta: '#ea76cb', cyan: '#179299', white: '#acb0be' },
+    bright:  { black: '#6c6f85', red: '#d20f39', green: '#40a02b', yellow: '#df8e1d', blue: '#1e66f5', magenta: '#ea76cb', cyan: '#179299', white: '#bcc0cc' },
+  },
+  {
+    id: 'gruvbox-light',
+    label: 'Gruvbox Light',
+    tone: 'Light',
+    description: 'Warm parchment background with earthy ANSI colors and softer glare.',
+    primary: { background: '#fbf1c7', foreground: '#3c3836' },
+    cursor:  { text: '#fbf1c7', cursor: '#3c3836' },
+    normal:  { black: '#3c3836', red: '#cc241d', green: '#98971a', yellow: '#d79921', blue: '#458588', magenta: '#b16286', cyan: '#689d6a', white: '#7c6f64' },
+    bright:  { black: '#928374', red: '#9d0006', green: '#79740e', yellow: '#b57614', blue: '#076678', magenta: '#8f3f71', cyan: '#427b58', white: '#282828' },
+  },
+  {
+    id: 'solarized-light',
+    label: 'Solarized Light',
+    tone: 'Light',
+    description: 'Classic Solarized light variant with low glare and balanced ANSI hues.',
+    primary: { background: '#fdf6e3', foreground: '#657b83' },
+    cursor:  { text: '#fdf6e3', cursor: '#657b83' },
+    normal:  { black: '#073642', red: '#dc322f', green: '#859900', yellow: '#b58900', blue: '#268bd2', magenta: '#d33682', cyan: '#2aa198', white: '#eee8d5' },
+    bright:  { black: '#002b36', red: '#cb4b16', green: '#586e75', yellow: '#657b83', blue: '#839496', magenta: '#6c71c4', cyan: '#93a1a1', white: '#fdf6e3' },
+  },
+];
+
+const THEME_PRESETS: Record<string, ThemePreset> = Object.fromEntries(
+  THEME_PRESET_LIST.map((preset) => [preset.id, preset]),
+) as Record<string, ThemePreset>;
+
+function assignThemeColors(colors: any, preset: ThemePreset) {
+  Object.assign(colors.primary, preset.primary);
+  Object.assign(colors.cursor, preset.cursor);
+  Object.assign(colors.normal, preset.normal);
+  Object.assign(colors.bright, preset.bright);
+}
+
+function themeMatchesColors(colors: any, preset: ThemePreset): boolean {
+  const primaryKeys = ['background', 'foreground'] as const;
+  for (const key of primaryKeys) {
+    const actual = normalizeHexColor(String(colors.primary?.[key] ?? ''));
+    const expected = normalizeHexColor(String(preset.primary[key] ?? ''));
+    if (actual !== expected) return false;
+  }
+
+  const cursorKeys = ['text', 'cursor'] as const;
+  for (const key of cursorKeys) {
+    const actual = normalizeHexColor(String(colors.cursor?.[key] ?? ''));
+    const expected = normalizeHexColor(String(preset.cursor[key] ?? ''));
+    if (actual !== expected) return false;
+  }
+
+  for (const name of COLOR_NAMES) {
+    const key = name.toLowerCase();
+    const normalActual = normalizeHexColor(String(colors.normal?.[key] ?? ''));
+    const normalExpected = normalizeHexColor(String(preset.normal[key] ?? ''));
+    const brightActual = normalizeHexColor(String(colors.bright?.[key] ?? ''));
+    const brightExpected = normalizeHexColor(String(preset.bright[key] ?? ''));
+    if (normalActual !== normalExpected || brightActual !== brightExpected) return false;
+  }
+
+  return true;
+}
+
+function resolveThemePreset(colors: any): ThemePreset | null {
+  const storedTheme = typeof colors.theme === 'string' ? colors.theme : null;
+  if (storedTheme && THEME_PRESETS[storedTheme]) return THEME_PRESETS[storedTheme];
+  return THEME_PRESET_LIST.find((preset) => themeMatchesColors(colors, preset)) ?? null;
+}
 
 const FALLBACK_FONTS = [
   'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Cascadia Mono',
@@ -240,56 +396,114 @@ function getFontFamilies(): Promise<string[]> {
 // ── colors custom renderer (reused inside Appearance tab) ─────────────────────
 
 function renderColorsSection(cfg: any, el: HTMLElement, dirty: () => void) {
-  let activeThemeSel: HTMLSelectElement | null = null;
   let activePreview: HTMLElement | null = null;
+  let activeThemeName: HTMLElement | null = null;
+  let activeThemeDesc: HTMLElement | null = null;
+  const themeCards = new Map<string, HTMLButtonElement>();
 
-  const applyColor = (path: string, normalized: string, swatchEl: HTMLElement, hexEl: HTMLInputElement) => {
-    swatchEl.style.background = normalized;
+  const syncThemeSelection = (themeId: string | null) => {
+    const preset = themeId ? THEME_PRESETS[themeId] : null;
+    if (activeThemeName) activeThemeName.textContent = preset?.label ?? 'Custom palette';
+    if (activeThemeDesc) {
+      activeThemeDesc.textContent = preset?.description
+        ?? 'Manually tuned colors. Pick any preset above to replace the current palette.';
+    }
+    for (const [id, card] of themeCards) {
+      card.classList.toggle('active', id === themeId);
+    }
+  };
+
+  const syncThemeStateFromColors = () => {
+    const matched = resolveThemePreset(cfg.colors);
+    cfg.colors.theme = matched?.id ?? null;
+    syncThemeSelection(matched?.id ?? null);
+  };
+
+  const applyColor = (path: string, normalized: string, pickerEl: HTMLInputElement, hexEl: HTMLInputElement) => {
+    pickerEl.value = normalized;
     hexEl.value = normalized;
     setPath(cfg, path, normalized);
-    cfg.colors.theme = null;
-    if (activeThemeSel) activeThemeSel.value = '';
+    syncThemeStateFromColors();
     if (activePreview) syncThemePreview(activePreview, cfg);
     dirty();
   };
 
-  const renderAll = () => {
-    el.innerHTML = '';
-
-    // Theme preset
-    const presetRow = document.createElement('div');
-    presetRow.className = 'st-field';
-    const presetLbl = document.createElement('label');
-    presetLbl.className = 'st-label';
-    presetLbl.textContent = 'Theme preset';
-    const presetDesc = document.createElement('span');
-    presetDesc.className = 'st-desc';
-    presetDesc.textContent = 'Selects a preset and fills colors below';
-    presetLbl.appendChild(presetDesc);
-    const themeSel = document.createElement('select');
-    themeSel.className = 'st-input';
-    activeThemeSel = themeSel;
-    for (const t of KNOWN_THEMES) {
-      const opt = document.createElement('option');
-      opt.value = t; opt.textContent = t || '(custom)';
-      if ((cfg.colors.theme || '') === t) opt.selected = true;
-      themeSel.appendChild(opt);
-    }
-    themeSel.addEventListener('change', () => {
-      const preset = THEME_PRESETS[themeSel.value];
-      if (preset) {
-        Object.assign(cfg.colors.primary, preset.primary);
-        Object.assign(cfg.colors.cursor,  preset.cursor);
-        Object.assign(cfg.colors.normal,  preset.normal);
-        Object.assign(cfg.colors.bright,  preset.bright);
-      }
-      cfg.colors.theme = themeSel.value || null;
+  const buildThemeCard = (preset: ThemePreset) => {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'st-theme-card';
+    card.innerHTML = `
+      <div class="st-theme-card-head">
+        <div class="st-theme-card-title">${preset.label}</div>
+        <span class="st-theme-card-badge">${preset.tone}</span>
+      </div>
+      <div class="st-theme-card-desc">${preset.description}</div>
+      <div class="st-theme-card-swatches">
+        <span class="st-theme-card-swatch" style="background:${preset.primary.background}"></span>
+        <span class="st-theme-card-swatch" style="background:${preset.primary.foreground}"></span>
+        <span class="st-theme-card-swatch" style="background:${preset.normal.blue}"></span>
+        <span class="st-theme-card-swatch" style="background:${preset.normal.green}"></span>
+        <span class="st-theme-card-swatch" style="background:${preset.normal.red}"></span>
+      </div>
+    `;
+    card.addEventListener('click', () => {
+      assignThemeColors(cfg.colors, preset);
+      cfg.colors.theme = preset.id;
       dirty();
       renderAll();
     });
-    presetRow.appendChild(presetLbl);
-    presetRow.appendChild(themeSel);
-    el.appendChild(presetRow);
+    themeCards.set(preset.id, card);
+    return card;
+  };
+
+  const renderAll = () => {
+    el.innerHTML = '';
+    themeCards.clear();
+
+    const activeTheme = resolveThemePreset(cfg.colors);
+
+    const summary = document.createElement('div');
+    summary.className = 'st-theme-summary';
+    const summaryLabel = document.createElement('div');
+    summaryLabel.className = 'st-theme-summary-label';
+    summaryLabel.textContent = 'Current palette';
+    activeThemeName = document.createElement('div');
+    activeThemeName.className = 'st-theme-summary-name';
+    activeThemeDesc = document.createElement('div');
+    activeThemeDesc.className = 'st-theme-summary-desc';
+    summary.appendChild(summaryLabel);
+    summary.appendChild(activeThemeName);
+    summary.appendChild(activeThemeDesc);
+    el.appendChild(summary);
+
+    const presetWrap = document.createElement('div');
+    presetWrap.className = 'st-theme-picker';
+    const presetIntro = document.createElement('div');
+    presetIntro.className = 'st-color-group-desc';
+    presetIntro.textContent =
+      'Theme presets replace the whole terminal palette. Light themes are included now, so you can switch the whole app feel without editing individual colors.';
+    presetWrap.appendChild(presetIntro);
+
+    const tones: ThemeTone[] = ['Dark', 'Light'];
+    for (const tone of tones) {
+      const toneGroup = document.createElement('div');
+      toneGroup.className = 'st-theme-tone-group';
+
+      const toneTitle = document.createElement('div');
+      toneTitle.className = 'st-theme-tone-title';
+      toneTitle.textContent = tone;
+      toneGroup.appendChild(toneTitle);
+
+      const grid = document.createElement('div');
+      grid.className = 'st-theme-card-grid';
+      for (const preset of THEME_PRESET_LIST.filter((item) => item.tone === tone)) {
+        grid.appendChild(buildThemeCard(preset));
+      }
+      toneGroup.appendChild(grid);
+      presetWrap.appendChild(toneGroup);
+    }
+
+    el.appendChild(presetWrap);
 
     const preview = document.createElement('div');
     preview.className = 'st-theme-preview';
@@ -309,7 +523,7 @@ function renderColorsSection(cfg: any, el: HTMLElement, dirty: () => void) {
     syncThemePreview(preview, cfg);
     el.appendChild(preview);
 
-    const group = (title: string, fields: Array<[string, string]>, desc?: string) => {
+    const group = (title: string, fields: Array<{ path: string; label: string; hint: string }>, desc?: string) => {
       const wrap = document.createElement('div');
       wrap.className = 'st-color-group';
       const titleEl = document.createElement('div');
@@ -325,16 +539,26 @@ function renderColorsSection(cfg: any, el: HTMLElement, dirty: () => void) {
       const grid = document.createElement('div');
       grid.className = 'st-color-grid';
 
-      for (const [path, label] of fields) {
+      for (const field of fields) {
         const item = document.createElement('div');
         item.className = 'st-color-item';
+
+        const nameEl = document.createElement('div');
+        nameEl.className = 'st-color-name';
+        nameEl.textContent = field.label;
+
+        const hintEl = document.createElement('div');
+        hintEl.className = 'st-color-hint';
+        hintEl.textContent = field.hint;
+
         const controls = document.createElement('div');
         controls.className = 'st-color-controls';
-        const initColor = normalizeHexColor(String(getPath(cfg, path) || '#000000')) || '#000000';
+        const initColor = normalizeHexColor(String(getPath(cfg, field.path) || '#000000')) || '#000000';
 
-        const swatch = document.createElement('div');
-        swatch.className = 'st-color-swatch';
-        swatch.style.background = initColor;
+        const picker = document.createElement('input');
+        picker.type = 'color';
+        picker.className = 'st-color-input';
+        picker.value = initColor;
 
         const hex = document.createElement('input');
         hex.type = 'text';
@@ -342,47 +566,79 @@ function renderColorsSection(cfg: any, el: HTMLElement, dirty: () => void) {
         hex.spellcheck = false;
         hex.value = initColor;
 
-        swatch.addEventListener('click', () => { hex.focus(); hex.select(); });
+        bindValuePreview(picker, () => {
+          const n = normalizeHexColor(picker.value);
+          if (n) applyColor(field.path, n, picker, hex);
+        });
+
         hex.addEventListener('input', () => {
           const n = normalizeHexColor(hex.value);
-          if (n) applyColor(path, n, swatch, hex);
+          if (n) applyColor(field.path, n, picker, hex);
         });
         hex.addEventListener('change', () => {
           const n = normalizeHexColor(hex.value);
-          if (n) applyColor(path, n, swatch, hex);
+          if (n) applyColor(field.path, n, picker, hex);
         });
         hex.addEventListener('blur', () => {
           const n = normalizeHexColor(hex.value);
           if (!n) {
-            const cfgVal = normalizeHexColor(String(getPath(cfg, path))) ?? initColor;
+            const cfgVal = normalizeHexColor(String(getPath(cfg, field.path))) ?? initColor;
             hex.value = cfgVal;
-            swatch.style.background = cfgVal;
+            picker.value = cfgVal;
           }
         });
 
-        controls.appendChild(swatch);
+        controls.appendChild(picker);
         controls.appendChild(hex);
+        item.appendChild(nameEl);
+        item.appendChild(hintEl);
         item.appendChild(controls);
-        item.appendChild(document.createTextNode(label));
         grid.appendChild(item);
       }
       wrap.appendChild(grid);
       return wrap;
     };
 
-    const COLOR_NAMES = ['Black','Red','Green','Yellow','Blue','Magenta','Cyan','White'];
     el.appendChild(group('Background & text', [
-      ['colors.primary.background', 'Background'],
-      ['colors.primary.foreground', 'Foreground'],
-      ['colors.cursor.cursor',      'Cursor'],
-      ['colors.cursor.text',        'Cursor text'],
-    ], 'Terminal background, default text color, and cursor appearance'));
+      { path: 'colors.primary.background', label: 'Background', hint: 'Main terminal background across all panes.' },
+      { path: 'colors.primary.foreground', label: 'Foreground', hint: 'Default terminal text color.' },
+      { path: 'colors.cursor.cursor',      label: 'Cursor', hint: 'The visible cursor fill or stroke.' },
+      { path: 'colors.cursor.text',        label: 'Cursor text', hint: 'Text shown under a block cursor.' },
+    ], 'These affect the base terminal surface. They do not recolor the whole settings UI, but they do drive the terminal canvas and theme preview.'));
     el.appendChild(group('ANSI colors',
-      COLOR_NAMES.map(n => [`colors.normal.${n.toLowerCase()}`, n] as [string, string]),
-      'The 8 standard ANSI colors used by shell programs'));
+      COLOR_NAMES.map((name) => {
+        const key = name.toLowerCase();
+        const hints: Record<string, string> = {
+          black: 'Muted or dim terminal text.',
+          red: 'Errors, failures, and destructive output.',
+          green: 'Success output and executable state.',
+          yellow: 'Warnings, prompts, and notices.',
+          blue: 'Directories, links, and the app normal-mode accent.',
+          magenta: 'Labels and the app AI-mode accent.',
+          cyan: 'Info output and the app terminal-mode accent.',
+          white: 'Light neutral text inside terminal output.',
+        };
+        return { path: `colors.normal.${key}`, label: name, hint: hints[key] };
+      }),
+      'These are the standard 8 ANSI colors used by your shell programs. Some of them also tint app states, so blue/green/cyan/magenta are visible outside plain terminal text too.'));
     el.appendChild(group('ANSI colors (bright)',
-      COLOR_NAMES.map(n => [`colors.bright.${n.toLowerCase()}`, `Bright ${n}`] as [string, string]),
-      'Bold / high-intensity variants of the 8 ANSI colors'));
+      COLOR_NAMES.map((name) => {
+        const key = name.toLowerCase();
+        const hints: Record<string, string> = {
+          black: 'High-intensity black used for stronger dim text.',
+          red: 'Brighter error and alert output.',
+          green: 'Brighter success and completion output.',
+          yellow: 'Brighter warnings and some note/highlight chrome.',
+          blue: 'Brighter directory and link output.',
+          magenta: 'Brighter labels and prompts.',
+          cyan: 'Brighter informational output.',
+          white: 'Maximum-contrast neutral text.',
+        };
+        return { path: `colors.bright.${key}`, label: `Bright ${name}`, hint: hints[key] };
+      }),
+      'These are the high-intensity ANSI variants. Shells and tools use them for bold output, and bright yellow also feeds some of the app warning/note tinting.'));
+
+    syncThemeSelection(activeTheme?.id ?? null);
   };
 
   renderAll();
@@ -404,7 +660,6 @@ const SECTIONS: Section[] = [
           { path: 'window.padding.y',    label: 'Padding Y',     type: 'number', min: 0, max: 80 },
           { path: 'window.decorations',  label: 'Decorations',   type: 'select', opts: ['full','none','transparent','buttonless'] },
           { path: 'window.startup_mode', label: 'Startup mode',  type: 'select', opts: ['windowed','maximized','fullscreen','simpleFullscreen'] },
-          { path: 'window.compact_mode', label: 'Compact mode',  type: 'checkbox', desc: 'Hide the top toolbar and pane headers — only the workspace and input bar remain' },
         ],
       },
       {
@@ -495,6 +750,46 @@ const SECTIONS: Section[] = [
     id: 'appearance',
     label: 'Appearance',
     groups: [
+      {
+        label: 'Workspace',
+        fields: [
+          { path: 'window.compact_mode', label: 'Compact mode', type: 'checkbox', desc: 'Hide the top toolbar and pane headers so the workspace stays visually lighter' },
+          {
+            path: 'waterfall.inactive_pane_scrim_strength',
+            label: 'Inactive pane fade',
+            type: 'range',
+            min: 0,
+            max: 100,
+            step: 5,
+            unit: '%',
+            desc: 'How much non-active panes recede in compact mode. Higher values make the current pane stand out more.',
+            read: (v: number) => String(Math.round(((typeof v === 'number' ? v : 0) / 40) * 100)),
+            write: (s: string) => Math.round((Math.max(0, Math.min(100, parseFloat(s) || 0)) / 100) * 40),
+          },
+        ],
+      },
+      {
+        label: 'Window Glass',
+        fields: [
+          { path: 'window.transparency_enabled', label: 'Transparency', type: 'checkbox', desc: 'Allow the desktop/background to show through the app window' },
+          { path: 'window.shell_background_opaque', label: 'Opaque shell background', type: 'checkbox', desc: 'Keep the terminal body on a solid black background while the rest of the app stays transparent' },
+          {
+            path: 'window.opacity',
+            label: 'Window transparency',
+            type: 'range',
+            min: 0,
+            max: 85,
+            step: 5,
+            unit: '%',
+            desc: 'Higher values make the app more see-through. 0% is solid.',
+            read: (v: number) => String(Math.round((1 - (typeof v === 'number' ? v : 1)) * 100)),
+            write: (s: string) => {
+              const transparency = Math.max(0, Math.min(85, parseFloat(s) || 0));
+              return Math.max(0.15, Math.min(1, 1 - (transparency / 100)));
+            },
+          },
+        ],
+      },
       {
         label: 'Colors',
         custom: renderColorsSection,
@@ -1164,6 +1459,37 @@ export class SettingsPanel {
         this.markDirty();
       });
       row.appendChild(sel);
+
+    } else if (f.type === 'range') {
+      const wrap = document.createElement('div');
+      wrap.className = 'st-range-wrap';
+
+      const inp = document.createElement('input');
+      inp.type = 'range';
+      inp.className = 'st-range';
+      inp.value = String(displayVal ?? '');
+      if (f.min != null) inp.min = String(f.min);
+      if (f.max != null) inp.max = String(f.max);
+      if (f.step != null) inp.step = String(f.step);
+
+      const valueEl = document.createElement('span');
+      valueEl.className = 'st-range-value';
+      const syncValue = () => {
+        valueEl.textContent = `${inp.value}${f.unit ?? ''}`;
+      };
+      syncValue();
+
+      inp.addEventListener('input', () => {
+        syncValue();
+        const v = parseFloat(inp.value);
+        const finalV = f.write ? f.write(String(v)) : v;
+        setPath(this.cfg, f.path, finalV);
+        this.markDirty();
+      });
+
+      wrap.appendChild(inp);
+      wrap.appendChild(valueEl);
+      row.appendChild(wrap);
 
     } else {
       // text or number

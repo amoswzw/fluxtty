@@ -5,12 +5,10 @@ const AGENT_PATTERNS: Array<{ agent: AgentType; patterns: RegExp[] }> = [
   {
     agent: 'claude',
     patterns: [
-      /╭─+╮/,                      // claude's box drawing UI (reliable)
       /Claude Code/i,               // header text
       /\bClaude\b.*❯/,
-      /\bclaude\b.*>\s*$/im,
+      /^\s*claude\b.*>\s*$/im,
       /✻ Welcome to Claude/i,
-      /esc to interrupt/i,          // claude's input hint
     ],
   },
   {
@@ -56,6 +54,7 @@ class AgentDetector {
       // indicating the agent exited. Don't un-detect just because the launch
       // output scrolled out of the buffer window.
       if (EXIT_PATTERNS.some(p => p.test(buf))) {
+        this.buffers.set(paneId, '');
         this.detectedAgents.set(paneId, 'none');
         (this.listeners.get(paneId) || []).forEach(l => l('none'));
       }

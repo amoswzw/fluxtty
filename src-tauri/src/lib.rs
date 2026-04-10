@@ -21,8 +21,6 @@ pub fn run() {
         .manage(new_shared_pty_manager(max_scrollback))
         .manage(new_shared_session_manager())
         .setup(move |app| {
-            use tauri::Manager;
-
             let handle = app.handle().clone();
             let cfg_shared = shared_config.clone();
 

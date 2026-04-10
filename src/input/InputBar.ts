@@ -29,6 +29,41 @@ function isEditableElement(el: Element | null): boolean {
     || (el instanceof HTMLElement && el.isContentEditable);
 }
 
+function splitShellInputForCompletion(input: string): { prefix: string; currentWord: string } {
+  let tokenStart = 0;
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\' && !inSingle) {
+      escaped = true;
+      continue;
+    }
+    if (ch === '\'' && !inDouble) {
+      inSingle = !inSingle;
+      continue;
+    }
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      continue;
+    }
+    if (!inSingle && !inDouble && /\s/.test(ch)) {
+      tokenStart = i + 1;
+    }
+  }
+
+  return {
+    prefix: input.slice(0, tokenStart),
+    currentWord: input.slice(tokenStart),
+  };
+}
+
 export class InputBar {
   readonly el: HTMLElement;
   private inputEl!: HTMLInputElement;
@@ -51,6 +86,8 @@ export class InputBar {
   // Normal mode: gg double-key tracking
   private normalGgPending = false;
   private normalGgTimer: ReturnType<typeof setTimeout> | null = null;
+  private isComposing = false;
+  private liveTypingMirrorSynced = true;
 
   // Normal mode: inline command sub-state (activated by ':')
   private normalCommandActive = false;
@@ -153,8 +190,27 @@ export class InputBar {
     this.inputEl.addEventListener('keydown', (e) => this.handleKeyDown(e));
     this.inputEl.addEventListener('input', () => this.handleInput());
     this.inputEl.addEventListener('paste', (e) => this.handlePaste(e));
+    this.inputEl.addEventListener('compositionstart', () => {
+      this.isComposing = true;
+    });
+    this.inputEl.addEventListener('compositionend', (e) => this.handleCompositionEnd(e));
+    window.addEventListener('keydown', (e) => this.handleGlobalKey(e), true);
     document.addEventListener('keydown', (e) => this.handleGlobalKey(e), true);
     document.addEventListener('focus-inputbar', () => this.inputEl.focus());
+  }
+
+  private handleCompositionEnd(e: CompositionEvent) {
+    this.isComposing = false;
+    const mode = modeManager.getMode();
+    if (mode.type !== 'insert') return;
+    if (!configContext.get().input.live_typing) return;
+    if (!e.data) return;
+    void this.sendKeyToPTY(e.data);
+    if (!this.liveTypingMirrorSynced) {
+      queueMicrotask(() => {
+        if (!this.liveTypingMirrorSynced) this.inputEl.value = '';
+      });
+    }
   }
 
   private async handlePaste(e: ClipboardEvent) {
@@ -167,21 +223,24 @@ export class InputBar {
     const text = e.clipboardData?.getData('text') ?? '';
     if (!text) return;
 
+    if (!this.liveTypingMirrorSynced) e.preventDefault();
     await this.sendKeyToPTY(text);
     // Don't preventDefault — let browser update the input field for visual feedback
   }
 
-  private handleGlobalKey(e: KeyboardEvent) {
-    // Ctrl+\: toggle terminal (raw xterm) ↔ normal
-    if (e.ctrlKey && e.key === '\\') {
-      e.preventDefault();
-      e.stopPropagation();
-      hintManager.record({ type: 'terminal-toggle-used' });
-      modeManager.toggle();
-      if (!modeManager.isInPaneMode()) this.inputEl.focus();
-      return;
-    }
+  private markLiveTypingMirrorUnsynced() {
+    this.liveTypingMirrorSynced = false;
+    this.hideAutocomplete();
+    this.inputEl.value = '';
+  }
 
+  private resetLiveTypingMirror() {
+    this.liveTypingMirrorSynced = true;
+    this.hideAutocomplete();
+    this.inputEl.value = '';
+  }
+
+  private handleGlobalKey(e: KeyboardEvent) {
     // In Normal mode, keypresses must reach the input bar regardless of where
     // focus currently is (e.g. after clicking a pane header, sidebar item, etc.).
     // Intercept here (capture phase), refocus, and forward to handleKeyDown.
@@ -196,8 +255,11 @@ export class InputBar {
   }
 
   private handleKeyDown(e: KeyboardEvent) {
+    const composing = e.isComposing || this.isComposing;
+
     // ── Pane selector navigation ──────────────────────────────────────
     if (this.paneSelector.isOpen()) {
+      if (composing) return;
       if (e.key === 'ArrowUp'   || e.key === 'k') { e.preventDefault(); this.paneSelector.moveUp();   return; }
       if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); this.paneSelector.moveDown(); return; }
       if (e.key === 'Enter')     { e.preventDefault(); this.paneSelector.confirmSelection(); return; }
@@ -212,6 +274,7 @@ export class InputBar {
 
       // ── Inline command sub-state (after pressing ':') ─────────────
       if (this.normalCommandActive) {
+        if (composing) return;
         if (e.key === 'Escape') {
           e.preventDefault();
           this.exitNormalCommand();
@@ -287,6 +350,7 @@ export class InputBar {
 
     // ── AI mode (free-form chat with Workspace AI) ───────────────────
     if (mode.type === 'ai') {
+      if (composing) return;
       if (e.key === 'Escape') {
         e.preventDefault();
         this.hideAutocomplete();
@@ -331,6 +395,7 @@ export class InputBar {
 
     // ── Insert mode (line editor → PTY) ──────────────────────────────
     if (mode.type === 'insert') {
+      if (composing) return;
       if (e.key === 'Escape') {
         e.preventDefault();
         this.hideAutocomplete();
@@ -343,39 +408,61 @@ export class InputBar {
 
       if (liveTyping) {
         // ── Live-typing: every keystroke forwarded to PTY immediately ──
-        // Printable chars: browser updates input field, we also send to PTY
         if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) {
+          if (!this.liveTypingMirrorSynced) e.preventDefault();
           this.sendKeyToPTY(e.key);
-          return; // don't preventDefault — let browser add char to input field
+          return;
         }
         if (e.key === 'Backspace') {
+          if (!this.liveTypingMirrorSynced) e.preventDefault();
           this.sendKeyToPTY('\x7f');
-          return; // don't preventDefault — let browser remove char from input field
+          return;
         }
         if (e.key === 'Enter') {
           e.preventDefault();
-          const text = this.inputEl.value;
+          if (this.autocompleteIdx >= 0 && this.liveTypingMirrorSynced) {
+            this.autocompleteAccept();
+            return;
+          }
+          const text = this.liveTypingMirrorSynced ? this.inputEl.value : '';
           const activeId = sessionManager.getActivePaneId();
           if (text.trim() && (this.cmdHistory.length === 0 || this.cmdHistory[this.cmdHistory.length - 1] !== text)) {
             this.cmdHistory.push(text);
           }
           this.historyIdx = -1;
           this.historyDraft = '';
-          this.inputEl.value = '';
+          this.resetLiveTypingMirror();
           this.sendKeyToPTY('\r');
           document.dispatchEvent(new CustomEvent('scroll-to-active-pane'));
           if (activeId != null) this.notifyInsertCommandSubmitted(text, activeId);
           return;
         }
-        // Arrow keys: clear input (shell will echo new state) + send escape seq
-        if (e.key === 'ArrowUp')    { e.preventDefault(); this.inputEl.value = ''; this.sendKeyToPTY('\x1b[A'); return; }
-        if (e.key === 'ArrowDown')  { e.preventDefault(); this.inputEl.value = ''; this.sendKeyToPTY('\x1b[B'); return; }
-        if (e.key === 'ArrowRight') { e.preventDefault(); this.sendKeyToPTY('\x1b[C'); return; }
-        if (e.key === 'ArrowLeft')  { e.preventDefault(); this.sendKeyToPTY('\x1b[D'); return; }
-        if (e.key === 'Tab')        { e.preventDefault(); this.sendKeyToPTY('\t');      return; }
-        if (e.key === 'Delete')     { e.preventDefault(); this.sendKeyToPTY('\x1b[3~'); return; }
-        if (e.key === 'Home')       { e.preventDefault(); this.sendKeyToPTY('\x1b[H'); return; }
-        if (e.key === 'End')        { e.preventDefault(); this.sendKeyToPTY('\x1b[F'); return; }
+        if (e.key === 'ArrowUp')    { e.preventDefault(); this.markLiveTypingMirrorUnsynced(); this.sendKeyToPTY('\x1b[A'); return; }
+        if (e.key === 'ArrowDown')  { e.preventDefault(); this.markLiveTypingMirrorUnsynced(); this.sendKeyToPTY('\x1b[B'); return; }
+        if (e.key === 'ArrowRight') { e.preventDefault(); this.markLiveTypingMirrorUnsynced(); this.sendKeyToPTY('\x1b[C'); return; }
+        if (e.key === 'ArrowLeft')  { e.preventDefault(); this.markLiveTypingMirrorUnsynced(); this.sendKeyToPTY('\x1b[D'); return; }
+        if (e.key === 'Tab') {
+          e.preventDefault();
+          if (!this.liveTypingMirrorSynced) {
+            this.hideAutocomplete();
+            this.sendKeyToPTY('\t');
+            return;
+          }
+          if (this.autocompleteItems.length > 0) {
+            this.autocompleteNavigate(e.shiftKey ? -1 : 1);
+          } else {
+            const agent = this.activeAgent();
+            if (this.inputEl.value.startsWith('/') && agent !== 'none') {
+              this.showAgentSlashCompletions(agent, this.inputEl.value, true);
+            } else {
+              void this.triggerShellComplete(true);
+            }
+          }
+          return;
+        }
+        if (e.key === 'Delete')     { e.preventDefault(); this.markLiveTypingMirrorUnsynced(); this.sendKeyToPTY('\x1b[3~'); return; }
+        if (e.key === 'Home')       { e.preventDefault(); this.markLiveTypingMirrorUnsynced(); this.sendKeyToPTY('\x1b[H'); return; }
+        if (e.key === 'End')        { e.preventDefault(); this.markLiveTypingMirrorUnsynced(); this.sendKeyToPTY('\x1b[F'); return; }
         if (e.ctrlKey) {
           const ctrlMap: Record<string, string> = {
             c: '\x03', d: '\x04', a: '\x01', e: '\x05',
@@ -384,8 +471,10 @@ export class InputBar {
           const seq = ctrlMap[e.key.toLowerCase()];
           if (seq) {
             e.preventDefault();
-            if (e.key === 'c' || e.key === 'u' || e.key === 'l' || e.key === 'r') {
-              this.inputEl.value = ''; // these clear the line in the shell
+            if (e.key.toLowerCase() === 'c') {
+              this.resetLiveTypingMirror();
+            } else {
+              this.markLiveTypingMirrorUnsynced();
             }
             this.sendKeyToPTY(seq);
             return;
@@ -504,12 +593,17 @@ export class InputBar {
 
     // ── Insert mode input handling ───────────────────────────────────
     if (mode.type === 'insert') {
+      if (configContext.get().input.live_typing && !this.liveTypingMirrorSynced) {
+        if (val) this.inputEl.value = '';
+        if (this.autocompleteItems.length > 0) this.hideAutocomplete();
+        return;
+      }
       // / is a plain character (e.g. claude slash commands, paths)
       // Show agent slash completions as the user types /cmd
       if (val.startsWith('/')) {
         const agent = this.activeAgent();
         if (agent !== 'none') {
-          this.showAgentSlashCompletions(agent, val);
+          this.showAgentSlashCompletions(agent, val, !!configContext.get().input.live_typing);
         } else {
           if (this.autocompleteItems.length > 0) this.hideAutocomplete();
         }
@@ -616,11 +710,13 @@ export class InputBar {
 
   // ── Agent slash completions ───────────────────────────────────────
 
-  private showAgentSlashCompletions(agentType: AgentType, val: string) {
+  private showAgentSlashCompletions(agentType: AgentType, val: string, syncToPty = false) {
     const commands = AGENT_SLASH_COMMANDS[agentType] ?? [];
     const matches = val ? commands.filter(c => c.startsWith(val)) : commands;
     if (matches.length === 0) { this.hideAutocomplete(); return; }
     this.autocompletePrefix = '';
+    this.autocompleteCurrentWord = val;
+    this.autocompleteSyncToPty = syncToPty;
     this.showCompletions(matches);
   }
 
@@ -819,6 +915,8 @@ export class InputBar {
   private autocompleteItems: string[] = [];
   private autocompleteIdx = -1;
   private autocompletePrefix = '';
+  private autocompleteCurrentWord = '';
+  private autocompleteSyncToPty = false;
 
   private readonly AI_COMMANDS = [
     'run ', 'list', 'status', 'help', 'split',
@@ -831,6 +929,8 @@ export class InputBar {
     const suggestions = this.AI_COMMANDS.filter(s => s.startsWith(val));
     if (suggestions.length === 0) { this.hideAutocomplete(); return; }
     this.autocompletePrefix = '';
+    this.autocompleteCurrentWord = val;
+    this.autocompleteSyncToPty = false;
     this.showCompletions(suggestions);
   }
 
@@ -840,10 +940,12 @@ export class InputBar {
       : this.AI_COMMANDS;
     if (matches.length === 0) return;
     this.autocompletePrefix = '';
+    this.autocompleteCurrentWord = val;
+    this.autocompleteSyncToPty = false;
     this.showCompletions(matches);
   }
 
-  private async triggerShellComplete() {
+  private async triggerShellComplete(syncToPty = false) {
     const input = this.inputEl.value;
     const pane = sessionManager.getActivePane();
     const cwd = pane?.cwd || '~';
@@ -855,15 +957,18 @@ export class InputBar {
       console.error('shell_complete error:', e);
       return;
     }
-    if (completions.length === 0) return;
+    if (completions.length === 0) {
+      if (syncToPty) await this.sendKeyToPTY('\t');
+      return;
+    }
 
-    const lastSpace = input.lastIndexOf(' ');
-    const prefix = lastSpace >= 0 ? input.slice(0, lastSpace + 1) : '';
-    const currentWord = lastSpace >= 0 ? input.slice(lastSpace + 1) : input;
+    const { prefix, currentWord } = splitShellInputForCompletion(input);
+    let visibleWord = currentWord;
 
     if (completions.length === 1) {
-      const addSpace = !input.includes(' ') && !completions[0].endsWith('/');
+      const addSpace = prefix.length === 0 && !completions[0].endsWith('/');
       this.inputEl.value = prefix + completions[0] + (addSpace ? ' ' : '');
+      if (syncToPty) this.syncCompletionToPTY(currentWord, completions[0], addSpace);
       this.hideAutocomplete();
       return;
     }
@@ -871,9 +976,20 @@ export class InputBar {
     const lcp = longestCommonPrefix(completions);
     if (lcp.length > currentWord.length) {
       this.inputEl.value = prefix + lcp;
+      visibleWord = lcp;
+      if (syncToPty) this.syncCompletionToPTY(currentWord, lcp);
     }
     this.autocompletePrefix = prefix;
+    this.autocompleteCurrentWord = visibleWord;
+    this.autocompleteSyncToPty = syncToPty;
     this.showCompletions(completions);
+  }
+
+  private syncCompletionToPTY(currentWord: string, completedWord: string, addTrailingSpace = false) {
+    if (!completedWord.startsWith(currentWord)) return;
+    const delta = completedWord.slice(currentWord.length) + (addTrailingSpace ? ' ' : '');
+    if (!delta) return;
+    void this.sendKeyToPTY(delta);
   }
 
   private showCompletions(items: string[]) {
@@ -889,6 +1005,9 @@ export class InputBar {
         e.preventDefault();
         const idx = parseInt((item as HTMLElement).dataset.idx || '0');
         this.inputEl.value = this.autocompletePrefix + this.autocompleteItems[idx];
+        if (this.autocompleteSyncToPty) {
+          this.syncCompletionToPTY(this.autocompleteCurrentWord, this.autocompleteItems[idx]);
+        }
         this.hideAutocomplete();
         this.inputEl.focus();
       });
@@ -906,6 +1025,9 @@ export class InputBar {
   private autocompleteAccept() {
     if (this.autocompleteIdx >= 0 && this.autocompleteItems[this.autocompleteIdx]) {
       this.inputEl.value = this.autocompletePrefix + this.autocompleteItems[this.autocompleteIdx];
+      if (this.autocompleteSyncToPty) {
+        this.syncCompletionToPTY(this.autocompleteCurrentWord, this.autocompleteItems[this.autocompleteIdx]);
+      }
     }
     this.hideAutocomplete();
   }
@@ -915,6 +1037,8 @@ export class InputBar {
     this.autocompleteItems = [];
     this.autocompleteIdx = -1;
     this.autocompletePrefix = '';
+    this.autocompleteCurrentWord = '';
+    this.autocompleteSyncToPty = false;
   }
 
   focus() {

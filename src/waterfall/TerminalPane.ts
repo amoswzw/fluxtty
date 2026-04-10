@@ -121,14 +121,17 @@ export class TerminalPane {
 
     // Config changes
     configContext.onChange((cfg) => {
+      const nextFontFamily = `'${cfg.font.family}', 'Symbols Nerd Font Mono', 'JetBrains Mono', 'Fira Code', Consolas, monospace`;
+      const fontSizeChanged = this.term.options.fontSize !== cfg.font.size;
+      const fontFamilyChanged = this.term.options.fontFamily !== nextFontFamily;
       this.workspaceScrollModifier = this.normalizeScrollModifier(cfg.input.workspace_scroll_modifier);
       this.term.options.theme       = configContext.getXtermTheme(cfg);
       this.term.options.fontSize    = cfg.font.size;
-      this.term.options.fontFamily  = `'${cfg.font.family}', 'Symbols Nerd Font Mono', 'JetBrains Mono', 'Fira Code', Consolas, monospace`;
+      this.term.options.fontFamily  = nextFontFamily;
       this.term.options.cursorBlink = cfg.cursor.blinking;
       this.term.options.cursorStyle = cfg.cursor.style.toLowerCase() as 'block' | 'underline' | 'bar';
       this.term.refresh(0, this.term.rows - 1);
-      this.fitAddon.fit();
+      if (fontSizeChanged || fontFamilyChanged) this.fit();
     });
 
     // Close button
@@ -462,13 +465,10 @@ export class TerminalPane {
       viewport.scrollTop += deltaPixels;
       return;
     }
+
     const approxLineHeight = Math.max(1, (this.term.options.fontSize ?? 13) * 1.2);
     const lines = deltaPixels / approxLineHeight;
-    if (Math.abs(lines) < 1) {
-      this.term.scrollLines(deltaPixels > 0 ? 1 : -1);
-      return;
-    }
-    this.term.scrollLines(lines > 0 ? Math.floor(lines) : Math.ceil(lines));
+    if (Math.abs(lines) >= 1) this.term.scrollLines(lines > 0 ? Math.floor(lines) : Math.ceil(lines));
   }
 
   private routeWheel(e: WheelEvent, source: 'container' | 'xterm'): boolean {
@@ -533,7 +533,8 @@ export class TerminalPane {
     return this.routeWheel(e, 'xterm');
   };
 
-  // All keys in terminal mode pass through to the PTY.
+  // All keys in terminal mode pass through unless a document-level shortcut
+  // has already intercepted them in the capture phase.
   private handleViKey(_e: KeyboardEvent): boolean {
     return true;
   }
