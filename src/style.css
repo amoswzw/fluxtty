@@ -128,6 +128,41 @@ html, body {
   background: color-mix(in srgb, var(--accent) 8%, transparent 92%);
 }
 
+/* ── Compact mode — hides toolbar, pane headers, and row borders ──── */
+body[data-compact="true"] .app-header  { display: none; }
+body[data-compact="true"] .pane-header { display: none; }
+/* Extra top breathing room — no header above the first row in compact mode.
+   Use margin-top (not padding-top) so clientHeight stays correct for
+   recalcRowHeights(), which derives row heights from the element's clientHeight. */
+body[data-compact="true"] .waterfall-area {
+  margin-top: 14px;
+  padding-bottom: calc(var(--window-padding-y) + var(--workspace-bottom-safe-gap));
+  scroll-padding-top: var(--window-padding-y);
+  scroll-padding-bottom: calc(var(--window-padding-y) + var(--workspace-bottom-safe-gap));
+}
+/* Hide note header in compact mode so the textarea aligns with terminal content */
+body[data-compact="true"] .row-note-header { display: none; }
+
+/* Suppress decorative glow on inactive rows; keep a hairline border for boundaries */
+body[data-compact="true"] .terminal-row:not(:has(.terminal-pane.active)) {
+  border-color: color-mix(in srgb, var(--border) 30%, transparent 70%);
+  box-shadow: none;
+}
+/* Pane-level active indicator: 2px inset bar at top replaces the hidden header strip */
+body[data-compact="true"][data-mode="normal"] .terminal-pane.active,
+body[data-compact="true"][data-mode="pane-selector"] .terminal-pane.active {
+  box-shadow: inset 0 2px 0 var(--blue);
+}
+body[data-compact="true"][data-mode="insert"] .terminal-pane.active {
+  box-shadow: inset 0 2px 0 var(--green);
+}
+body[data-compact="true"][data-mode="terminal"] .terminal-pane.active {
+  box-shadow: inset 0 2px 0 var(--cyan);
+}
+body[data-compact="true"][data-mode="ai"] .terminal-pane.active {
+  box-shadow: inset 0 2px 0 var(--magenta);
+}
+
 /* ── Main area ────────────────────────────────────────────────────── */
 .app-main {
   flex: 1;
@@ -227,6 +262,7 @@ html, body {
 
 /* ── Waterfall Area ───────────────────────────────────────────────── */
 .waterfall-area {
+  --workspace-bottom-safe-gap: 0px;
   flex: 1;
   overflow-y: auto;
   display: flex;
@@ -247,6 +283,7 @@ html, body {
   flex-shrink: 0;
   gap: 0;
   position: relative;
+  isolation: isolate;
   border: 1px solid color-mix(in srgb, var(--border) 65%, transparent 35%);
   border-radius: 10px;
   overflow: hidden;
@@ -254,28 +291,50 @@ html, body {
   transition: border-color 0.18s, box-shadow 0.18s;
   /* height is set dynamically by JS */
 }
-
-/* Row-level active glow — uses :has() to target the row containing the active pane */
+/* Row-level active indicator — ::after overlay with z-index above pane-headers.
+   Using border-color alone is unreliable: the pane-header's background covers the
+   row's top edge, making the indicator invisible when the row is at the viewport top.
+   The ::after pseudo-element renders on top of all children and is always visible. */
+.terminal-row::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid transparent;
+  border-radius: 9px; /* row is 10px; we're inside the 1px border */
+  pointer-events: none;
+  z-index: 100;
+  opacity: 0;
+  transition: border-color 0.18s, opacity 0.18s;
+}
 body[data-mode="normal"] .terminal-row:has(.terminal-pane.active),
 body[data-mode="pane-selector"] .terminal-row:has(.terminal-pane.active) {
-  border-color: var(--blue);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--blue) 20%, transparent 80%),
-              0 4px 28px color-mix(in srgb, var(--blue) 10%, transparent 90%);
+  box-shadow: 0 4px 28px color-mix(in srgb, var(--blue) 10%, transparent 90%);
+}
+body[data-mode="normal"] .terminal-row:has(.terminal-pane.active)::after,
+body[data-mode="pane-selector"] .terminal-row:has(.terminal-pane.active)::after {
+  border-color: color-mix(in srgb, var(--blue) 70%, transparent 30%);
+  opacity: 1;
 }
 body[data-mode="insert"] .terminal-row:has(.terminal-pane.active) {
-  border-color: var(--green);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--green) 20%, transparent 80%),
-              0 4px 28px color-mix(in srgb, var(--green) 10%, transparent 90%);
+  box-shadow: 0 4px 28px color-mix(in srgb, var(--green) 10%, transparent 90%);
+}
+body[data-mode="insert"] .terminal-row:has(.terminal-pane.active)::after {
+  border-color: color-mix(in srgb, var(--green) 70%, transparent 30%);
+  opacity: 1;
 }
 body[data-mode="terminal"] .terminal-row:has(.terminal-pane.active) {
-  border-color: var(--cyan);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--cyan) 20%, transparent 80%),
-              0 4px 28px color-mix(in srgb, var(--cyan) 10%, transparent 90%);
+  box-shadow: 0 4px 28px color-mix(in srgb, var(--cyan) 10%, transparent 90%);
+}
+body[data-mode="terminal"] .terminal-row:has(.terminal-pane.active)::after {
+  border-color: color-mix(in srgb, var(--cyan) 70%, transparent 30%);
+  opacity: 1;
 }
 body[data-mode="ai"] .terminal-row:has(.terminal-pane.active) {
-  border-color: var(--magenta);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--magenta) 20%, transparent 80%),
-              0 4px 28px color-mix(in srgb, var(--magenta) 10%, transparent 90%);
+  box-shadow: 0 4px 28px color-mix(in srgb, var(--magenta) 10%, transparent 90%);
+}
+body[data-mode="ai"] .terminal-row:has(.terminal-pane.active)::after {
+  border-color: color-mix(in srgb, var(--magenta) 70%, transparent 30%);
+  opacity: 1;
 }
 
 /* ── Terminal Pane — panel inside the row, divided by thin separators ── */
@@ -294,9 +353,8 @@ body[data-mode="ai"] .terminal-row:has(.terminal-pane.active) {
 }
 .terminal-pane:last-child { border-right: none; }
 
-/* When resize handles are present, suppress pane border-right/left — the handle provides visual separation */
+/* When resize handles are present, the handle provides visual separation — suppress pane borders */
 .terminal-row:has(.pane-resize-handle) .terminal-pane { border-right: none; }
-.terminal-row:has(.pane-resize-handle) .row-note-pane { border-left: none; }
 
 /* ── Pane resize handle ───────────────────────────────────────────── */
 .pane-resize-handle {
@@ -339,26 +397,27 @@ body[data-mode="ai"] .terminal-row:has(.terminal-pane.active) {
   transition: background 0.15s, border-bottom-color 0.15s;
 }
 
-/* Active pane: colored top strip on header + subtle header tint */
+/* Active pane: colored top strip on header + subtle header tint.
+   Uses inset box-shadow instead of border-top to avoid overflowing the row boundary. */
 body[data-mode="normal"] .terminal-pane.active .pane-header,
 body[data-mode="pane-selector"] .terminal-pane.active .pane-header {
   background: color-mix(in srgb, var(--bg) 78%, var(--blue) 22%);
-  border-top: 2px solid var(--blue);
+  box-shadow: inset 0 2px 0 var(--blue);
   border-bottom-color: color-mix(in srgb, var(--blue) 28%, transparent 72%);
 }
 body[data-mode="insert"] .terminal-pane.active .pane-header {
   background: color-mix(in srgb, var(--bg) 78%, var(--green) 22%);
-  border-top: 2px solid var(--green);
+  box-shadow: inset 0 2px 0 var(--green);
   border-bottom-color: color-mix(in srgb, var(--green) 28%, transparent 72%);
 }
 body[data-mode="terminal"] .terminal-pane.active .pane-header {
   background: color-mix(in srgb, var(--bg) 76%, var(--cyan) 24%);
-  border-top: 2px solid var(--cyan);
+  box-shadow: inset 0 2px 0 var(--cyan);
   border-bottom-color: color-mix(in srgb, var(--cyan) 32%, transparent 68%);
 }
 body[data-mode="ai"] .terminal-pane.active .pane-header {
   background: color-mix(in srgb, var(--bg) 78%, var(--magenta) 22%);
-  border-top: 2px solid var(--magenta);
+  box-shadow: inset 0 2px 0 var(--magenta);
   border-bottom-color: color-mix(in srgb, var(--magenta) 28%, transparent 72%);
 }
 
@@ -414,24 +473,24 @@ body[data-mode="ai"] .terminal-pane.active .pane-header {
 
 /* ── Row Note ─────────────────────────────────────────────────────── */
 
-/* Note pane — rightmost panel in the row, same structure as terminal-pane */
+/* Note pane — rightmost panel in the row, visually distinct from terminals.
+   No border-left: the resize handle already provides physical separation. */
 .row-note-pane {
   flex: 0 0 280px; /* default; overridden by JS from config.waterfall.note_width */
   display: flex;
   flex-direction: column;
   border: none;
-  border-left: 1px solid color-mix(in srgb, var(--border) 50%, transparent 50%);
   border-radius: 0;
   overflow: hidden;
-  background: var(--bg);
+  background: color-mix(in srgb, var(--yellow) 4%, var(--bg) 96%);
   min-width: 0;
 }
 
-/* Header matches .pane-header exactly, with a yellow title as the only difference */
+/* Header — amber-tinted to match the note pane background */
 .row-note-header {
   height: 30px;
-  background: color-mix(in srgb, var(--surface2) 80%, var(--bg) 20%);
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent 45%);
+  background: color-mix(in srgb, var(--yellow) 8%, var(--surface2) 92%);
+  border-bottom: 1px solid color-mix(in srgb, var(--yellow) 25%, transparent 75%);
   display: flex;
   align-items: center;
   padding: 0 10px;
@@ -488,6 +547,40 @@ body[data-mode="ai"] .terminal-pane.active .pane-header {
 .row-note-textarea::-webkit-scrollbar { width: 3px; }
 .row-note-textarea::-webkit-scrollbar-thumb { background: var(--border); }
 
+/* ── Row note toggle button ──────────────────────────────────────────── */
+/* Sits just left of the pane close button; appears on row hover.        */
+.row-note-toggle {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--surface2) 85%, var(--bg) 15%);
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent 40%);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  font-family: var(--font-family);
+  line-height: 1;
+}
+.terminal-row:hover .row-note-toggle { opacity: 0.55; }
+.terminal-row:hover .row-note-toggle:hover { opacity: 1; color: var(--yellow); }
+/* Always visible when the row has saved note content */
+.terminal-row[data-has-note="true"] .row-note-toggle { opacity: 0.75; color: var(--yellow); }
+.terminal-row[data-has-note="true"] .row-note-toggle:hover { opacity: 1; }
+/* Hide when the note pane is already open */
+.terminal-row:has(.row-note-pane) .row-note-toggle { display: none; }
+/* Hidden via settings */
+body[data-show-note-btn="false"] .row-note-toggle { display: none; }
+
 .term-container {
   flex: 1;
   overflow: hidden;
@@ -498,8 +591,7 @@ body[data-mode="ai"] .terminal-pane.active .pane-header {
 /* xterm overrides */
 .xterm { height: 100%; }
 .xterm-viewport { overscroll-behavior: contain; }
-.xterm-viewport::-webkit-scrollbar { width: 3px; }
-.xterm-viewport::-webkit-scrollbar-thumb { background: var(--border); }
+.xterm-viewport::-webkit-scrollbar { display: none; }
 
 /* ── Pane Context Menu ────────────────────────────────────────────── */
 .pane-ctx-menu {

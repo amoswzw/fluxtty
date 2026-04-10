@@ -166,7 +166,7 @@ export function getCheatSheetSections(options: {
         { shortcuts: ['Shift+W'], description: 'Move to the previous pane in the current row' },
         { shortcuts: ['Ctrl+D', 'Ctrl+U'], description: 'Scroll the active terminal by half a page in Normal mode' },
         { shortcuts: ['Ctrl+F', 'Ctrl+B'], description: 'Scroll the active terminal by a full page in Normal mode' },
-        { shortcuts: ['G', 'GG'], description: 'Jump to the bottom or top of the active terminal scrollback' },
+        { shortcuts: ['G', 'GG'], description: 'Jump to the bottom or top of the workspace' },
       ],
     },
     {

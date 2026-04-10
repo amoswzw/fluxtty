@@ -689,3 +689,41 @@ pub async fn workspace_snapshot_load(
         }
     }
 }
+
+
+// ── Window chrome ──────────────────────────────────────────────────────────────────────────────
+
+/// Show or hide the macOS traffic-light buttons without touching window
+/// decorations (which would remove rounded corners and shadow).
+/// On non-macOS platforms this is a no-op.
+// `sel_impl` from objc 0.2 emits an unexpected_cfgs warning about cargo-clippy.
+// It is harmless — suppress it for this function.
+#[allow(unexpected_cfgs)]
+#[tauri::command]
+pub async fn window_set_traffic_lights_hidden(
+    window: tauri::WebviewWindow,
+    hidden: bool,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc::{msg_send, sel, sel_impl};
+        use objc::runtime::Object;
+
+        // Cast to usize so the value is Send and can be moved into the closure.
+        let ns_win_ptr = window.ns_window().map_err(|e| e.to_string())? as usize;
+
+        window.run_on_main_thread(move || unsafe {
+            let ns_win = ns_win_ptr as *mut Object;
+            // NSWindowCloseButton = 0, NSWindowMiniaturizeButton = 1, NSWindowZoomButton = 2
+            for kind in [0i64, 1i64, 2i64] {
+                let btn: *mut Object = msg_send![ns_win, standardWindowButton: kind];
+                if !btn.is_null() {
+                    let _: () = msg_send![btn, setHidden: hidden as u8];
+                }
+            }
+        }).map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window, hidden);
+    Ok(())
+}

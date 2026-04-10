@@ -112,6 +112,16 @@ export async function initApp(root: HTMLElement) {
     }
   });
 
+  // Compact mode: hide/show macOS traffic-light buttons via native NSWindow API.
+  // CSS cannot cover native controls; this uses objc FFI to setHidden on each button.
+  if (isMac) {
+    const applyTrafficLights = (compact: boolean) => {
+      invoke('window_set_traffic_lights_hidden', { hidden: compact }).catch(() => {});
+    };
+    applyTrafficLights(configContext.get().window.compact_mode);
+    configContext.onChange((cfg) => applyTrafficLights(cfg.window.compact_mode));
+  }
+
   // Keybindings
   const appWindow = getCurrentWindow();
   const syncWindowChromeState = async () => {
@@ -238,6 +248,9 @@ async function restoreSnapshot(snapshot: WorkspaceSnapshot, waterfallArea: Water
 
   let lastRowIndex = -1;
   let domRowIdx = -1;
+  // Collect notes keyed by domRowIdx — applied after all panes in the row are
+  // spawned so the note pane is always appended last (i.e. stays at far right).
+  const pendingNotes = new Map<number, string>();
 
   for (const snap of sorted) {
     const isNewRow = snap.row_index !== lastRowIndex;
@@ -263,16 +276,23 @@ async function restoreSnapshot(snapshot: WorkspaceSnapshot, waterfallArea: Water
     }
     await Promise.all(renames);
 
-    // Restore row note (stored only on the first pane per row).
+    // Queue row note (stored only on the first pane per row) for later so that
+    // all terminal panes in the row are in the DOM before the note pane is
+    // appended — keeping the note pinned at the far right.
     if (snap.pane_index === 0 && snap.note) {
-      const rowEls = waterfallArea.getRowsWithNotes();
-      const rowData = rowEls[domRowIdx];
-      if (rowData) waterfallArea.setRowNote(rowData.rowEl, snap.note);
+      pendingNotes.set(domRowIdx, snap.note);
     }
 
     if (snap.is_active) {
       await sessionManager.setActivePane(pane.paneId);
     }
+  }
+
+  // Apply row notes now that every pane has been spawned.
+  for (const [rowIdx, note] of pendingNotes) {
+    const rowEls = waterfallArea.getRowsWithNotes();
+    const rowData = rowEls[rowIdx];
+    if (rowData) waterfallArea.setRowNote(rowData.rowEl, note);
   }
 }
 

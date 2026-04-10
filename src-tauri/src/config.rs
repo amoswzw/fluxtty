@@ -26,6 +26,7 @@ pub struct WindowConfig {
     pub padding: PaddingConfig,
     pub decorations: String,
     pub startup_mode: String,
+    pub compact_mode: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +149,7 @@ pub struct WaterfallConfig {
     pub new_pane_focus: bool,
     pub note_width: u32,
     pub pane_min_width: u32,
+    pub show_note_button: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,6 +197,7 @@ impl Default for WindowConfig {
             padding: PaddingConfig { x: 8, y: 6 },
             decorations: "full".to_string(),
             startup_mode: "windowed".to_string(),
+            compact_mode: false,
         }
     }
 }
@@ -358,6 +361,7 @@ impl Default for WaterfallConfig {
             new_pane_focus: true,
             note_width: 280,
             pane_min_width: 150,
+            show_note_button: true,
         }
     }
 }

@@ -21,6 +21,8 @@ export class WaterfallArea {
   private panes: Map<number, TerminalPane> = new Map();
   private rowEls: HTMLElement[] = [];
   private rowNotes: Map<HTMLElement, string> = new Map();
+  private layoutObserver: ResizeObserver;
+  private scrollSettleTimer: ReturnType<typeof setTimeout> | null = null;
   private nextPaneId = 1;
   private prevCwd: Map<number, string> = new Map();
   private lastPointerPos: { x: number; y: number } | null = null;
@@ -29,6 +31,9 @@ export class WaterfallArea {
     this.el = document.createElement('div');
     this.el.className = 'waterfall-area';
     container.appendChild(this.el);
+    this.layoutObserver = new ResizeObserver(() => this.recalcRowHeights());
+    this.layoutObserver.observe(this.el);
+    this.el.addEventListener('scroll', () => this.scheduleEdgeSettle(), { passive: true });
 
     // React to session changes — also detect cwd changes for auto-renaming
     sessionManager.onChange((panes, activePaneId) => {
@@ -54,7 +59,6 @@ export class WaterfallArea {
         pane.setActive(pane.paneId === id);
       }
     });
-
     window.addEventListener('resize', () => this.recalcRowHeights());
 
     document.addEventListener('mousemove', (e) => {
@@ -100,10 +104,28 @@ export class WaterfallArea {
       const activeId = sessionManager.getActivePaneId();
       if (activeId != null) this.scrollToPane(activeId);
     });
+    document.addEventListener('workspace-wheel-scroll', (e: Event) => {
+      const { deltaPixels, paneId, clientX, clientY } = (e as CustomEvent<{
+        deltaPixels: number;
+        paneId?: number;
+        clientX?: number;
+        clientY?: number;
+      }>).detail;
+      this.routeWorkspaceWheel(deltaPixels, paneId, clientX, clientY);
+    });
 
     // Normal-mode vi scroll: j/k/gg/G/Ctrl+D/U/F/B dispatch this event
     document.addEventListener('normal-vi-scroll', (e: Event) => {
       const { cmd } = (e as CustomEvent<{ cmd: string }>).detail;
+      switch (cmd) {
+        case 'top':
+          this.jumpWorkspaceBoundary('top');
+          return;
+        case 'bottom':
+          this.jumpWorkspaceBoundary('bottom');
+          return;
+      }
+
       const pane = this.getActivePane();
       if (!pane) return;
       switch (cmd) {
@@ -113,13 +135,58 @@ export class WaterfallArea {
         case 'halfUp':    pane.scrollBy(-Math.floor(pane.rows / 2)); break;
         case 'pageDown':  pane.scrollBy(pane.rows);  break;
         case 'pageUp':    pane.scrollBy(-pane.rows); break;
-        case 'top':       pane.scrollToTop();    break;
-        case 'bottom':    pane.scrollToBottom(); break;
       }
     });
   }
 
+  private jumpWorkspaceBoundary(direction: 'top' | 'bottom') {
+    const targetPaneId = this.pickBoundaryPane(direction);
+    if (targetPaneId != null && sessionManager.getActivePaneId() !== targetPaneId) {
+      void sessionManager.setActivePane(targetPaneId);
+    }
+    if (direction === 'top') this.scrollWorkspaceToTop();
+    else this.scrollWorkspaceToBottom();
+  }
+
+  private pickBoundaryPane(direction: 'top' | 'bottom'): number | null {
+    const rows = this.getPanesByDOMRow();
+    if (rows.length === 0) return null;
+    const targetRow = direction === 'top' ? rows[0] : rows[rows.length - 1];
+    if (!targetRow || targetRow.length === 0) return null;
+
+    const activeId = sessionManager.getActivePaneId();
+    const activeEl = activeId != null ? this.getPane(activeId)?.el ?? null : null;
+    if (!activeEl || targetRow.length === 1) return targetRow[0].id;
+
+    const activeRect = activeEl.getBoundingClientRect();
+    const activeCenter = activeRect.left + activeRect.width / 2;
+    let targetId = targetRow[0].id;
+    let minDist = Infinity;
+    for (const pane of targetRow) {
+      const el = this.getPane(pane.id)?.el;
+      if (!el) continue;
+      const rect = el.getBoundingClientRect();
+      const dist = Math.abs((rect.left + rect.width / 2) - activeCenter);
+      if (dist < minDist) {
+        minDist = dist;
+        targetId = pane.id;
+      }
+    }
+    return targetId;
+  }
+
+  private scrollWorkspaceToTop() {
+    this.el.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  private scrollWorkspaceToBottom() {
+    const maxScrollTop = Math.max(this.el.scrollHeight - this.el.clientHeight, 0);
+    this.el.scrollTo({ top: maxScrollTop, behavior: 'smooth' });
+  }
+
   private recalcRowHeights() {
+    const bottomOcclusion = this.getBottomOcclusion();
+    this.el.style.setProperty('--workspace-bottom-safe-gap', `${bottomOcclusion}px`);
     const containerH = this.el.clientHeight || (window.innerHeight - 36 - 42);
     const cfg = configContext.get();
     const rowCount = this.rowEls.length;
@@ -151,6 +218,8 @@ export class WaterfallArea {
   }
 
   private scrollRowWindowIntoView(rowEl: HTMLElement, behavior: ScrollBehavior = 'smooth') {
+    const bottomOcclusion = this.getBottomOcclusion();
+    this.el.style.setProperty('--workspace-bottom-safe-gap', `${bottomOcclusion}px`);
     if (this.el.scrollHeight <= this.el.clientHeight + 1) {
       rowEl.scrollIntoView({ behavior, block: 'nearest' });
       return;
@@ -173,6 +242,81 @@ export class WaterfallArea {
     const startIndex = Math.min(Math.max(targetIndex - rowsPerViewport + 1, 0), maxStart);
     const top = Math.max(this.rowEls[startIndex].offsetTop - paddingY, 0);
     this.el.scrollTo({ top, behavior });
+  }
+
+  private getBottomOcclusion(): number {
+    if (!this.isCompactMode()) return 0;
+    const inputBarEl = document.querySelector('.input-bar-wrapper') as HTMLElement | null;
+    if (!inputBarEl) return 0;
+    const overlap = Math.ceil(this.el.getBoundingClientRect().bottom - inputBarEl.getBoundingClientRect().top);
+    return Math.max(overlap, 0);
+  }
+
+  private isCompactMode(): boolean {
+    return !!configContext.get().window.compact_mode;
+  }
+
+  private shouldSnapRows(): boolean {
+    return this.isCompactMode() || !!configContext.get().waterfall.scroll_snap;
+  }
+
+  private shouldAutoSettleRows(): boolean {
+    const cfg = configContext.get();
+    return !!cfg.waterfall.scroll_snap;
+  }
+
+  private scheduleEdgeSettle() {
+    if (!this.shouldAutoSettleRows()) return;
+    if (this.scrollSettleTimer) clearTimeout(this.scrollSettleTimer);
+    this.scrollSettleTimer = setTimeout(() => {
+      this.scrollSettleTimer = null;
+      this.snapScrollToNearestRow();
+    }, 80);
+  }
+
+  private snapScrollToNearestRow() {
+    if (this.rowEls.length === 0) return;
+    const maxScrollTop = Math.max(this.el.scrollHeight - this.el.clientHeight, 0);
+    if (maxScrollTop <= 0) return;
+    const snapPoints = this.getRowSnapPoints();
+    const currentTop = this.el.scrollTop;
+    let targetTop = snapPoints[0];
+    let minDist = Math.abs(currentTop - targetTop);
+    for (let i = 1; i < snapPoints.length; i += 1) {
+      const dist = Math.abs(currentTop - snapPoints[i]);
+      if (dist < minDist) {
+        minDist = dist;
+        targetTop = snapPoints[i];
+      }
+    }
+    if (Math.abs(targetTop - currentTop) > 1) {
+      this.el.scrollTo({ top: targetTop, behavior: 'auto' });
+    }
+  }
+
+  private getRowSnapPoints(): number[] {
+    const maxScrollTop = Math.max(this.el.scrollHeight - this.el.clientHeight, 0);
+    const paddingY = configContext.get().window.padding.y;
+    return this.rowEls
+      .map(rowEl => Math.max(rowEl.offsetTop - paddingY, 0))
+      .concat(maxScrollTop);
+  }
+
+  private routeWorkspaceWheel(deltaPixels: number, paneId?: number, clientX?: number, clientY?: number) {
+    if (deltaPixels === 0) return;
+    const hoveredPaneId = this.syncHoveredPaneFromPointer(clientX, clientY);
+    const targetPaneId = hoveredPaneId ?? paneId;
+    if (targetPaneId != null && Number.isFinite(targetPaneId) && sessionManager.getActivePaneId() !== targetPaneId) {
+      void sessionManager.setActivePane(targetPaneId);
+    }
+
+    const scaledDelta = deltaPixels * Math.max(1, configContext.get().scrolling.multiplier || 1);
+    this.el.scrollBy({ top: scaledDelta, behavior: 'auto' });
+    if (this.lastPointerPos) {
+      requestAnimationFrame(() => {
+        this.syncHoveredPaneFromPointer(this.lastPointerPos?.x, this.lastPointerPos?.y);
+      });
+    }
   }
 
   private normalizeScrollModifier(value: string | null | undefined): WorkspaceScrollModifier {
@@ -221,14 +365,71 @@ export class WaterfallArea {
     }
   }
 
-  private syncHoveredPaneFromPointer() {
-    if (!this.lastPointerPos) return;
-    const hovered = document.elementFromPoint(this.lastPointerPos.x, this.lastPointerPos.y) as HTMLElement | null;
-    const paneEl = hovered?.closest('.terminal-pane') as HTMLElement | null;
-    const paneId = paneEl?.dataset.paneId ? Number(paneEl.dataset.paneId) : null;
+  private syncHoveredPaneFromPointer(x = this.lastPointerPos?.x, y = this.lastPointerPos?.y): number | null {
+    if (x == null || y == null) return null;
+    this.lastPointerPos = { x, y };
+    const paneId = this.pickPaneFromPoint(x, y);
     if (paneId != null && Number.isFinite(paneId) && sessionManager.getActivePaneId() !== paneId) {
       void sessionManager.setActivePane(paneId);
     }
+    return paneId != null && Number.isFinite(paneId) ? paneId : null;
+  }
+
+  private pickPaneFromPoint(x: number, y: number): number | null {
+    const hovered = document.elementFromPoint(x, y) as HTMLElement | null;
+    const hoveredPaneId = this.paneIdFromElement(hovered?.closest('.terminal-pane') as HTMLElement | null);
+    if (hoveredPaneId != null) return hoveredPaneId;
+
+    const containerRect = this.el.getBoundingClientRect();
+    if (x < containerRect.left || x > containerRect.right || y < containerRect.top || y > containerRect.bottom) {
+      return null;
+    }
+
+    let targetRow: HTMLElement | null = null;
+    let bestVerticalDistance = Infinity;
+    for (const rowEl of this.rowEls) {
+      const rowRect = rowEl.getBoundingClientRect();
+      if (rowRect.bottom < containerRect.top || rowRect.top > containerRect.bottom) continue;
+      const verticalDistance = y < rowRect.top ? rowRect.top - y : y > rowRect.bottom ? y - rowRect.bottom : 0;
+      if (verticalDistance < bestVerticalDistance) {
+        bestVerticalDistance = verticalDistance;
+        targetRow = rowEl;
+        if (verticalDistance === 0) break;
+      }
+    }
+    return targetRow ? this.pickPaneInRow(targetRow, x) : null;
+  }
+
+  private pickPaneInRow(rowEl: HTMLElement, x: number): number | null {
+    const paneEls = Array.from(rowEl.children)
+      .filter((child): child is HTMLElement => child instanceof HTMLElement && child.classList.contains('terminal-pane'));
+    if (paneEls.length === 0) return null;
+
+    for (const paneEl of paneEls) {
+      const rect = paneEl.getBoundingClientRect();
+      if (x >= rect.left && x <= rect.right) {
+        const paneId = this.paneIdFromElement(paneEl);
+        if (paneId != null) return paneId;
+      }
+    }
+
+    let targetPaneId = this.paneIdFromElement(paneEls[0]);
+    let bestHorizontalDistance = Infinity;
+    for (const paneEl of paneEls) {
+      const rect = paneEl.getBoundingClientRect();
+      const center = rect.left + rect.width / 2;
+      const distance = Math.abs(center - x);
+      if (distance < bestHorizontalDistance) {
+        bestHorizontalDistance = distance;
+        targetPaneId = this.paneIdFromElement(paneEl);
+      }
+    }
+    return targetPaneId;
+  }
+
+  private paneIdFromElement(paneEl: HTMLElement | null): number | null {
+    const paneId = paneEl?.dataset.paneId ? Number(paneEl.dataset.paneId) : null;
+    return paneId != null && Number.isFinite(paneId) ? paneId : null;
   }
 
   private wheelDeltaToPixels(e: WheelEvent): number {
@@ -265,18 +466,11 @@ export class WaterfallArea {
     if (this.shouldRouteWheelToWorkspace(e)) {
       const paneEl = target.closest('.terminal-pane') as HTMLElement | null;
       const paneId = paneEl?.dataset.paneId ? Number(paneEl.dataset.paneId) : null;
-      if (paneId != null && Number.isFinite(paneId) && sessionManager.getActivePaneId() !== paneId) {
-        void sessionManager.setActivePane(paneId);
-      }
-
       hintManager.record({ type: 'workspace-scroll-used' });
       document.dispatchEvent(new CustomEvent('workspace-scroll-used'));
       e.preventDefault();
       e.stopPropagation();
-      this.el.scrollBy({
-        top: deltaPixels * Math.max(1, configContext.get().scrolling.multiplier || 1),
-        behavior: 'auto',
-      });
+      this.routeWorkspaceWheel(deltaPixels, paneId ?? undefined, e.clientX, e.clientY);
       return;
     }
 
@@ -540,7 +734,12 @@ export class WaterfallArea {
   scrollToPane(id: number) {
     const pane = this.panes.get(id);
     if (pane) {
-      pane.el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      const rowEl = pane.el.parentElement as HTMLElement | null;
+      if (rowEl?.classList.contains('terminal-row') && this.shouldSnapRows()) {
+        this.scrollRowWindowIntoView(rowEl, 'smooth');
+      } else {
+        pane.el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
     }
   }
 
@@ -605,8 +804,16 @@ export class WaterfallArea {
 
   private attachRowNote(rowEl: HTMLElement) {
     this.rowNotes.set(rowEl, '');
-    // No floating button — note is triggered via `m` key or right-click menu.
-    // A left-border accent on the row indicates when a note has content.
+    const btn = document.createElement('button');
+    btn.className = 'row-note-toggle';
+    btn.title = 'Toggle note (m)';
+    btn.textContent = '✎';
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.toggleRowNote(rowEl);
+    });
+    rowEl.appendChild(btn);
   }
 
   toggleRowNote(rowEl: HTMLElement) {
@@ -685,8 +892,8 @@ export class WaterfallArea {
     document.dispatchEvent(new CustomEvent('focus-inputbar'));
   }
 
-  private _syncNoteBtn(_rowEl: HTMLElement, _text: string) {
-    // No-op: note pane itself is the visual indicator.
+  private _syncNoteBtn(rowEl: HTMLElement, text: string) {
+    rowEl.dataset.hasNote = text.trim().length > 0 ? 'true' : '';
   }
 
   private getTerminalPanes(rowEl: HTMLElement): HTMLElement[] {

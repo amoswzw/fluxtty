@@ -192,7 +192,7 @@ All bindings are configurable in `config.yaml`.
 | `/` | Fuzzy pane search |
 | `r` | Rename pane |
 | `b` | Toggle sidebar |
-| `gg` / `G` | Scroll to top / bottom |
+| `gg` / `G` | Jump workspace to top / bottom |
 | `Ctrl+D` / `Ctrl+U` | Scroll half page |
 
 ### Global
@@ -228,4 +228,3 @@ The waterfall layout idea — terminals stacking vertically, each filling the vi
 ## License
 
 MIT
-

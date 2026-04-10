@@ -404,6 +404,7 @@ const SECTIONS: Section[] = [
           { path: 'window.padding.y',    label: 'Padding Y',     type: 'number', min: 0, max: 80 },
           { path: 'window.decorations',  label: 'Decorations',   type: 'select', opts: ['full','none','transparent','buttonless'] },
           { path: 'window.startup_mode', label: 'Startup mode',  type: 'select', opts: ['windowed','maximized','fullscreen','simpleFullscreen'] },
+          { path: 'window.compact_mode', label: 'Compact mode',  type: 'checkbox', desc: 'Hide the top toolbar and pane headers — only the workspace and input bar remain' },
         ],
       },
       {
@@ -553,6 +554,7 @@ const SECTIONS: Section[] = [
           { path: 'waterfall.new_pane_focus',   label: 'Focus new pane',   type: 'checkbox' },
           { path: 'waterfall.note_width',       label: 'Note pane width',  type: 'number', min: 120, max: 800, desc: 'px — default width of the note pane' },
           { path: 'waterfall.pane_min_width',   label: 'Pane min width',   type: 'number', min: 80,  max: 600, desc: 'px — minimum width for terminal panes (enforced during drag resize)' },
+          { path: 'waterfall.show_note_button', label: 'Show note button',  type: 'checkbox', desc: 'Show ✎ on row hover to quickly open the note pane' },
         ],
       },
     ],

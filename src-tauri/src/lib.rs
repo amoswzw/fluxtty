@@ -128,6 +128,7 @@ pub fn run() {
             llm_complete,
             workspace_snapshot_save,
             workspace_snapshot_load,
+            window_set_traffic_lights_hidden,
         ])
         .run(tauri::generate_context!())
         .expect("error while running fluxtty");

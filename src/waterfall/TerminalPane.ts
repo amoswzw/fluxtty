@@ -69,7 +69,6 @@ export class TerminalPane {
   private destroyed = false;
   private info: PaneInfo;
   private workspaceScrollModifier: WorkspaceScrollModifier;
-  private scrollMultiplier: number;
 
 
   constructor(info: PaneInfo, onClose: (id: number, prevRow: HTMLElement | null) => void) {
@@ -81,7 +80,6 @@ export class TerminalPane {
 
     const cfg = configContext.get();
     this.workspaceScrollModifier = this.normalizeScrollModifier(cfg.input.workspace_scroll_modifier);
-    this.scrollMultiplier = Math.max(1, cfg.scrolling.multiplier || 1);
     this.term = new Terminal({
       theme: configContext.getXtermTheme(cfg),
       fontFamily: `'${cfg.font.family}', 'Symbols Nerd Font Mono', 'JetBrains Mono', 'Fira Code', Consolas, monospace`,
@@ -124,7 +122,6 @@ export class TerminalPane {
     // Config changes
     configContext.onChange((cfg) => {
       this.workspaceScrollModifier = this.normalizeScrollModifier(cfg.input.workspace_scroll_modifier);
-      this.scrollMultiplier = Math.max(1, cfg.scrolling.multiplier || 1);
       this.term.options.theme       = configContext.getXtermTheme(cfg);
       this.term.options.fontSize    = cfg.font.size;
       this.term.options.fontFamily  = `'${cfg.font.family}', 'Symbols Nerd Font Mono', 'JetBrains Mono', 'Fira Code', Consolas, monospace`;
@@ -483,17 +480,18 @@ export class TerminalPane {
     const workspace = this.el.closest('.waterfall-area') as HTMLElement | null;
     if (this.shouldRouteWheelToWorkspace(e)) {
       if (!workspace) return false;
-      if (sessionManager.getActivePaneId() !== this.paneId) {
-        void sessionManager.setActivePane(this.paneId);
-      }
       hintManager.record({ type: 'workspace-scroll-used' });
       document.dispatchEvent(new CustomEvent('workspace-scroll-used'));
       e.preventDefault();
       e.stopPropagation();
-      workspace.scrollBy({
-        top: deltaPixels * this.scrollMultiplier,
-        behavior: 'auto',
-      });
+      document.dispatchEvent(new CustomEvent('workspace-wheel-scroll', {
+        detail: {
+          deltaPixels,
+          paneId: this.paneId,
+          clientX: e.clientX,
+          clientY: e.clientY,
+        },
+      }));
       return false;
     }
 
