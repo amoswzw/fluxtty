@@ -29,6 +29,7 @@ export class KeybindingManager {
 
   private dispatch(e: KeyboardEvent) {
     if (!this.handlers) return;
+    if (e.defaultPrevented) return;
 
     // App-level macOS shortcuts — active anywhere inside this app window,
     // including terminal mode.
@@ -54,11 +55,29 @@ export class KeybindingManager {
     this.executeAction(action);
   }
 
+  private matchesBindingKey(bindingKey: string, e: KeyboardEvent): boolean {
+    if (bindingKey.toLowerCase() === e.key.toLowerCase() || bindingKey === e.code) {
+      return true;
+    }
+
+    if (bindingKey === '\\') {
+      return e.code === 'Backslash'
+        || e.code === 'IntlBackslash'
+        || e.code === 'IntlYen'
+        || e.key === '\\'
+        || e.key === '|'
+        || e.key === '¥'
+        || e.keyCode === 220
+        || e.keyCode === 226;
+    }
+
+    return false;
+  }
+
   private matchAction(e: KeyboardEvent): string | null {
     const cfg = configContext.get();
     for (const kb of cfg.keybindings) {
-      if (kb.key.toLowerCase() !== e.key.toLowerCase() &&
-          kb.key !== e.code) continue;
+      if (!this.matchesBindingKey(kb.key, e)) continue;
 
       const mods = (kb.mods || '').split('|').map(m => m.trim().toLowerCase());
       const ctrl = mods.includes('control');

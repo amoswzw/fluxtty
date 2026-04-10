@@ -292,24 +292,101 @@ pub struct ShellCompleteArgs {
     pub cwd: String,
 }
 
+fn split_shell_word_for_completion(input: &str) -> (&str, bool) {
+    let mut token_start = 0;
+    let mut completed_tokens = 0;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+    let mut in_token = false;
+
+    for (idx, ch) in input.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' if !in_single => {
+                escaped = true;
+                in_token = true;
+            }
+            '\'' if !in_double => {
+                in_single = !in_single;
+                in_token = true;
+            }
+            '"' if !in_single => {
+                in_double = !in_double;
+                in_token = true;
+            }
+            c if !in_single && !in_double && c.is_whitespace() => {
+                if in_token {
+                    completed_tokens += 1;
+                    in_token = false;
+                }
+                token_start = idx + c.len_utf8();
+            }
+            _ => in_token = true,
+        }
+    }
+
+    (&input[token_start..], completed_tokens == 0)
+}
+
+fn unescape_shell_word(word: &str) -> String {
+    let mut out = String::with_capacity(word.len());
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+
+    for ch in word.chars() {
+        if escaped {
+            out.push(ch);
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' if !in_single => escaped = true,
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            _ => out.push(ch),
+        }
+    }
+
+    if escaped {
+        out.push('\\');
+    }
+
+    out
+}
+
+fn shell_escape_word(word: &str) -> String {
+    let mut escaped = String::with_capacity(word.len());
+    for ch in word.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-') {
+            escaped.push(ch);
+        } else {
+            escaped.push('\\');
+            escaped.push(ch);
+        }
+    }
+    escaped
+}
+
 #[tauri::command]
 pub async fn shell_complete(args: ShellCompleteArgs) -> Result<Vec<String>, String> {
     let input = &args.input;
+    let (current_word, first_word) = split_shell_word_for_completion(input);
+    let word = unescape_shell_word(current_word);
 
     // Decide what to complete and which word is being completed
-    let (bash_script, word): (&str, String) = if !input.contains(' ') {
+    let bash_script = if first_word {
         // First word — complete commands, aliases, functions
-        (
-            "compgen -A function -A alias -c -- \"$COMP_WORD\" 2>/dev/null | sort -u | head -100",
-            input.clone(),
-        )
+        "compgen -A function -A alias -c -- \"$COMP_WORD\" 2>/dev/null | sort -u | head -100"
     } else {
         // Argument position — complete file/dir paths
-        let w = input.rsplit(' ').next().unwrap_or("").to_string();
-        (
-            "compgen -f -- \"$COMP_WORD\" 2>/dev/null | sort -u | head -100",
-            w,
-        )
+        "compgen -f -- \"$COMP_WORD\" 2>/dev/null | sort -u | head -100"
     };
 
     // Resolve cwd (handle ~ prefix)
@@ -334,7 +411,7 @@ pub async fn shell_complete(args: ShellCompleteArgs) -> Result<Vec<String>, Stri
 
     let completions: Vec<String> = String::from_utf8_lossy(&output.stdout)
         .lines()
-        .map(|s| s.to_string())
+        .map(shell_escape_word)
         .filter(|s| !s.is_empty())
         .collect();
 
@@ -696,9 +773,6 @@ pub async fn workspace_snapshot_load(
 /// Show or hide the macOS traffic-light buttons without touching window
 /// decorations (which would remove rounded corners and shadow).
 /// On non-macOS platforms this is a no-op.
-// `sel_impl` from objc 0.2 emits an unexpected_cfgs warning about cargo-clippy.
-// It is harmless — suppress it for this function.
-#[allow(unexpected_cfgs)]
 #[tauri::command]
 pub async fn window_set_traffic_lights_hidden(
     window: tauri::WebviewWindow,

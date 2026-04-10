@@ -23,6 +23,8 @@ pub struct Config {
 #[serde(default)]
 pub struct WindowConfig {
     pub opacity: f64,
+    pub transparency_enabled: bool,
+    pub shell_background_opaque: bool,
     pub padding: PaddingConfig,
     pub decorations: String,
     pub startup_mode: String,
@@ -150,6 +152,7 @@ pub struct WaterfallConfig {
     pub note_width: u32,
     pub pane_min_width: u32,
     pub show_note_button: bool,
+    pub inactive_pane_scrim_strength: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,7 +195,9 @@ impl Default for Config {
 impl Default for WindowConfig {
     fn default() -> Self {
         WindowConfig {
-            opacity: 1.0,
+            opacity: 0.72,
+            transparency_enabled: true,
+            shell_background_opaque: true,
             padding: PaddingConfig { x: 8, y: 6 },
             decorations: "full".to_string(),
             startup_mode: "windowed".to_string(),
@@ -221,34 +226,34 @@ impl Default for ColorsConfig {
     fn default() -> Self {
         ColorsConfig {
             primary: PrimaryColors {
-                background: "#0d1117".to_string(),
-                foreground: "#e6edf3".to_string(),
+                background: "#2e3440".to_string(),
+                foreground: "#d8dee9".to_string(),
             },
             cursor: CursorColors {
-                text: "#0d1117".to_string(),
-                cursor: "#e6edf3".to_string(),
+                text: "#2e3440".to_string(),
+                cursor: "#eceff4".to_string(),
             },
             normal: AnsiColors {
-                black: "#484f58".to_string(),
-                red: "#ff7b72".to_string(),
-                green: "#3fb950".to_string(),
-                yellow: "#d29922".to_string(),
-                blue: "#388bfd".to_string(),
-                magenta: "#bc8cff".to_string(),
-                cyan: "#39c5cf".to_string(),
-                white: "#b1bac4".to_string(),
+                black: "#3b4252".to_string(),
+                red: "#bf616a".to_string(),
+                green: "#a3be8c".to_string(),
+                yellow: "#ebcb8b".to_string(),
+                blue: "#81a1c1".to_string(),
+                magenta: "#b48ead".to_string(),
+                cyan: "#88c0d0".to_string(),
+                white: "#e5e9f0".to_string(),
             },
             bright: AnsiColors {
-                black: "#6e7681".to_string(),
-                red: "#ffa198".to_string(),
-                green: "#56d364".to_string(),
-                yellow: "#e3b341".to_string(),
-                blue: "#79c0ff".to_string(),
-                magenta: "#d2a8ff".to_string(),
-                cyan: "#56d4dd".to_string(),
-                white: "#f0f6fc".to_string(),
+                black: "#4c566a".to_string(),
+                red: "#bf616a".to_string(),
+                green: "#a3be8c".to_string(),
+                yellow: "#ebcb8b".to_string(),
+                blue: "#81a1c1".to_string(),
+                magenta: "#b48ead".to_string(),
+                cyan: "#8fbcbb".to_string(),
+                white: "#eceff4".to_string(),
             },
-            theme: None,
+            theme: Some("nord".to_string()),
         }
     }
 }
@@ -256,8 +261,8 @@ impl Default for ColorsConfig {
 impl Default for PrimaryColors {
     fn default() -> Self {
         PrimaryColors {
-            background: "#0d1117".to_string(),
-            foreground: "#e6edf3".to_string(),
+            background: "#2e3440".to_string(),
+            foreground: "#d8dee9".to_string(),
         }
     }
 }
@@ -265,8 +270,8 @@ impl Default for PrimaryColors {
 impl Default for CursorColors {
     fn default() -> Self {
         CursorColors {
-            text: "#0d1117".to_string(),
-            cursor: "#e6edf3".to_string(),
+            text: "#2e3440".to_string(),
+            cursor: "#eceff4".to_string(),
         }
     }
 }
@@ -274,14 +279,14 @@ impl Default for CursorColors {
 impl Default for AnsiColors {
     fn default() -> Self {
         AnsiColors {
-            black: "#484f58".to_string(),
-            red: "#ff7b72".to_string(),
-            green: "#3fb950".to_string(),
-            yellow: "#d29922".to_string(),
-            blue: "#388bfd".to_string(),
-            magenta: "#bc8cff".to_string(),
-            cyan: "#39c5cf".to_string(),
-            white: "#b1bac4".to_string(),
+            black: "#3b4252".to_string(),
+            red: "#bf616a".to_string(),
+            green: "#a3be8c".to_string(),
+            yellow: "#ebcb8b".to_string(),
+            blue: "#81a1c1".to_string(),
+            magenta: "#b48ead".to_string(),
+            cyan: "#88c0d0".to_string(),
+            white: "#e5e9f0".to_string(),
         }
     }
 }
@@ -361,6 +366,7 @@ impl Default for WaterfallConfig {
             note_width: 280,
             pane_min_width: 150,
             show_note_button: true,
+            inactive_pane_scrim_strength: 22,
         }
     }
 }

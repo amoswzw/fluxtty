@@ -6,7 +6,7 @@ import { configContext } from '../config/ConfigContext';
 import { nameFromCwd, isDefaultName, markAutoNamed, isAutoNamed } from '../session/AutoNamer';
 import { hintManager } from '../hints/HintManager';
 
-const WATERFALL_ROW_GAP = 5;
+const DEFAULT_WATERFALL_ROW_GAP = 5;
 const PANE_HEADER_HEIGHT = 30;
 const ROW_BORDER_Y = 2;
 const TERM_PADDING_X = 8;
@@ -190,6 +190,7 @@ export class WaterfallArea {
     const containerH = this.el.clientHeight || (window.innerHeight - 36 - 42);
     const cfg = configContext.get();
     const rowCount = this.rowEls.length;
+    const rowGap = this.getRowGap();
 
     let rowHeight: number;
     if (cfg.waterfall.row_height_mode === 'fixed') {
@@ -203,7 +204,7 @@ export class WaterfallArea {
       const paneChromeH = PANE_HEADER_HEIGHT + ROW_BORDER_Y + TERM_PADDING_Y;
       const lineH = cfg.font.size * 1.2;
       const threshold = paneChromeH + Math.ceil(MIN_LINES * lineH);
-      const overhead = cfg.window.padding.y * 2 + (rowCount > 1 ? WATERFALL_ROW_GAP * (rowCount - 1) : 0);
+      const overhead = cfg.window.padding.y * 2 + (rowCount > 1 ? rowGap * (rowCount - 1) : 0);
       const idealOuterHeight = rowCount > 0 ? Math.floor((containerH - overhead) / rowCount) : containerH;
       rowHeight = idealOuterHeight >= threshold ? idealOuterHeight : threshold;
     }
@@ -233,15 +234,25 @@ export class WaterfallArea {
 
     const paddingY = configContext.get().window.padding.y;
     const visibleH = Math.max(this.el.clientHeight - paddingY * 2, 1);
+    const rowGap = this.getRowGap();
     const rowHeight = Math.max(
       rowEl.getBoundingClientRect().height || rowEl.clientHeight || Math.round(parseFloat(rowEl.style.height || '0')),
       1,
     );
-    const rowsPerViewport = Math.max(1, Math.floor((visibleH + WATERFALL_ROW_GAP) / (rowHeight + WATERFALL_ROW_GAP)));
+    const rowsPerViewport = Math.max(1, Math.floor((visibleH + rowGap) / (rowHeight + rowGap)));
     const maxStart = Math.max(this.rowEls.length - rowsPerViewport, 0);
-    const startIndex = Math.min(Math.max(targetIndex - rowsPerViewport + 1, 0), maxStart);
+    const preferredOffset = this.isCompactMode()
+      ? Math.min(Math.max(Math.floor(rowsPerViewport / 3), 0), rowsPerViewport - 1)
+      : rowsPerViewport - 1;
+    const startIndex = Math.min(Math.max(targetIndex - preferredOffset, 0), maxStart);
     const top = Math.max(this.rowEls[startIndex].offsetTop - paddingY, 0);
     this.el.scrollTo({ top, behavior });
+  }
+
+  private getRowGap(): number {
+    const styles = window.getComputedStyle(this.el);
+    const gap = parseFloat(styles.rowGap || styles.gap || '');
+    return Number.isFinite(gap) ? gap : DEFAULT_WATERFALL_ROW_GAP;
   }
 
   private getBottomOcclusion(): number {
@@ -920,7 +931,8 @@ export class WaterfallArea {
     const handleCount = Math.max(0, nextTerminalCount - 1) + (notePane ? 1 : 0);
     const rowWidth = rowEl.clientWidth || this.el.clientWidth || window.innerWidth;
     const fallbackRowCount = Math.max(this.rowEls.length, 1);
-    const fallbackGap = fallbackRowCount > 1 ? WATERFALL_ROW_GAP * (fallbackRowCount - 1) : 0;
+    const rowGap = this.getRowGap();
+    const fallbackGap = fallbackRowCount > 1 ? rowGap * (fallbackRowCount - 1) : 0;
     const fallbackOuterHeight = Math.round(parseFloat(rowEl.style.height || '0'))
       || Math.max(Math.floor((this.el.clientHeight - fallbackGap) / fallbackRowCount), 1);
     const rowInnerHeight = rowEl.clientHeight
