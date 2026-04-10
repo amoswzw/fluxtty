@@ -156,7 +156,6 @@ pub struct WaterfallConfig {
 #[serde(default)]
 pub struct PersistenceConfig {
     pub keep_alive: bool,
-    pub tray_icon: bool,
     pub disk_state_path: String,
     pub scrollback_lines: u32,
     pub save_scrollback_on_exit: bool,
@@ -370,7 +369,6 @@ impl Default for PersistenceConfig {
     fn default() -> Self {
         PersistenceConfig {
             keep_alive: true,
-            tray_icon: true,
             disk_state_path: "~/.local/share/fluxtty/workspace.json".to_string(),
             scrollback_lines: 5000,
             save_scrollback_on_exit: true,
