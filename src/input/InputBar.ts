@@ -194,8 +194,11 @@ export class InputBar {
       this.isComposing = true;
     });
     this.inputEl.addEventListener('compositionend', (e) => this.handleCompositionEnd(e));
+    // Single capture-phase listener on window (fires before document listeners,
+    // including KeybindingManager). The document listener that was here is
+    // redundant: after window's handler calls inputEl.focus(), the document
+    // handler always sees active === inputEl and skips.
     window.addEventListener('keydown', (e) => this.handleGlobalKey(e), true);
-    document.addEventListener('keydown', (e) => this.handleGlobalKey(e), true);
     document.addEventListener('focus-inputbar', () => this.inputEl.focus());
   }
 
@@ -249,6 +252,12 @@ export class InputBar {
     const target = e.target instanceof Element ? e.target : null;
     const focusInTextEditor = isEditableElement(active) || isEditableElement(target);
     if (mode.type === 'normal' && active !== this.inputEl && !focusInTextEditor && !this.paneSelector.isOpen()) {
+      // Meta-modified keys are global app shortcuts (Quit, Settings, ClosePane…)
+      // handled by KeybindingManager. Don't intercept them here — KeybindingManager
+      // runs its own document capture listener AFTER this window listener, and it
+      // checks e.defaultPrevented. If we call handleKeyDown first it calls
+      // e.preventDefault() and KeybindingManager silently skips the shortcut.
+      if (e.metaKey) return;
       this.inputEl.focus();
       this.handleKeyDown(e);
     }

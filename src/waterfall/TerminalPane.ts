@@ -61,7 +61,6 @@ export class TerminalPane {
   private term: Terminal;
   private fitAddon: FitAddon;
   private termContainer!: HTMLElement;
-  private termViewport: HTMLElement | null = null;
   private unlisten: UnlistenFn | null = null;
   private unlistenClose: UnlistenFn | null = null;
   private resizeObserver: ResizeObserver;
@@ -100,7 +99,6 @@ export class TerminalPane {
 
     this.termContainer = this.el.querySelector('.term-container') as HTMLElement;
     this.term.open(this.termContainer);
-    this.termViewport = this.termContainer.querySelector('.xterm-viewport');
     this.term.blur(); // no cursor until Terminal mode is entered via enterDirectMode()
     // fit() is intentionally NOT called here — the element is not yet in the DOM.
     // WaterfallArea calls fit() after appendChild.
@@ -459,13 +457,10 @@ export class TerminalPane {
   }
 
   private scrollTerminalViewport(deltaPixels: number) {
-    const viewport = this.termViewport ?? this.termContainer.querySelector('.xterm-viewport');
-    if (viewport instanceof HTMLElement) {
-      this.termViewport = viewport;
-      viewport.scrollTop += deltaPixels;
-      return;
-    }
-
+    // Use term.scrollLines() rather than viewport.scrollTop so xterm's internal
+    // ydisp is updated synchronously. With scrollTop the DOM scroll event fires
+    // asynchronously, so a concurrent term.write() call sees ydisp still at the
+    // bottom and auto-scrolls back, overriding the user's scroll.
     const approxLineHeight = Math.max(1, (this.term.options.fontSize ?? 13) * 1.2);
     const lines = deltaPixels / approxLineHeight;
     if (Math.abs(lines) >= 1) this.term.scrollLines(lines > 0 ? Math.floor(lines) : Math.ceil(lines));
@@ -495,14 +490,28 @@ export class TerminalPane {
       return false;
     }
 
-    // Leave alternate-screen apps (vim, tmux full-screen UIs, etc.) on xterm's
-    // native path so wheel input still reaches the PTY as expected, but only
-    // when the event actually occurred inside xterm's own DOM. Container
-    // padding/edges should never leak out to the workspace.
     if (this.term.buffer.active.type === 'alternate') {
       if (source === 'xterm') {
-        return true;
+        // In Terminal mode xterm is focused and forwards wheel events via mouse
+        // tracking protocol, so leave it on xterm's native path.
+        if (modeManager.getMode().type === 'terminal') {
+          return true;
+        }
+        // In any other mode (Insert, Normal, AI) xterm is blurred and will not
+        // forward mouse events to the PTY. Convert the scroll to arrow-key
+        // sequences so the running application still receives the input.
+        e.preventDefault();
+        e.stopPropagation();
+        const approxLineHeight = Math.max(1, (this.term.options.fontSize ?? 13) * 1.2);
+        const lines = Math.max(1, Math.round(Math.abs(deltaPixels) / approxLineHeight));
+        const seq = deltaPixels > 0 ? '\x1b[B' : '\x1b[A'; // arrow down / up
+        for (let i = 0; i < lines; i++) {
+          invoke('pty_write', { args: { pane_id: this.paneId, data: seq } }).catch(console.error);
+        }
+        return false;
       }
+      // Wheel on pane chrome (header, padding) while in alternate screen:
+      // block workspace scroll-chaining but don't send PTY input.
       e.preventDefault();
       e.stopPropagation();
       return false;
@@ -519,10 +528,12 @@ export class TerminalPane {
     const target = e.target instanceof HTMLElement ? e.target : null;
     const inXterm = !!target?.closest('.xterm');
 
-    // Full-screen terminal apps should keep xterm's native wheel handling so
-    // scroll is translated into PTY input. Everything else inside the terminal
-    // container is handled here first so it can never leak to the workspace.
-    if (inXterm && this.term.buffer.active.type === 'alternate' && !this.shouldRouteWheelToWorkspace(e)) {
+    // In Terminal mode xterm is focused — leave alternate-screen events on
+    // xterm's native path so mouse-tracking protocol reaches the PTY.
+    // In all other modes routeWheel handles it (sends arrow keys to the PTY).
+    if (inXterm && this.term.buffer.active.type === 'alternate'
+        && !this.shouldRouteWheelToWorkspace(e)
+        && modeManager.getMode().type === 'terminal') {
       return;
     }
 
