@@ -1,6 +1,5 @@
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
-import type { PaneInfo, AgentType, SessionStatus } from './types';
+import { transport } from '../transport';
+import type { PaneInfo, AgentType, SessionStatus, PaneNameSource } from './types';
 
 type SessionListener = (panes: PaneInfo[], activePaneId: number | null) => void;
 type ActivePaneListener = (paneId: number) => void;
@@ -13,19 +12,19 @@ class SessionManager {
 
   async init() {
     // Load initial state
-    const result = await invoke<{ panes: PaneInfo[]; active_pane_id: number | null }>('session_list');
+    const result = await transport.send<{ panes: PaneInfo[]; active_pane_id: number | null }>('session_list');
     this.panes = new Map(result.panes.map(p => [p.id, p]));
     this.activePaneId = result.active_pane_id;
 
     // Subscribe to backend events
-    await listen<PaneInfo[]>('session:changed', (event) => {
-      this.panes = new Map(event.payload.map(p => [p.id, p]));
+    await transport.listen<PaneInfo[]>('session:changed', (panes) => {
+      this.panes = new Map(panes.map(p => [p.id, p]));
       this.notifyListeners();
     });
 
-    await listen<number>('session:active_changed', (event) => {
-      this.activePaneId = event.payload;
-      this.notifyActiveListeners(event.payload);
+    await transport.listen<number>('session:active_changed', (paneId) => {
+      this.activePaneId = paneId;
+      this.notifyActiveListeners(paneId);
     });
   }
 
@@ -67,27 +66,27 @@ class SessionManager {
   async setActivePane(id: number) {
     this.activePaneId = id;
     this.notifyActiveListeners(id);
-    await invoke('session_set_active', { paneId: id });
+    await transport.send('session_set_active', { paneId: id });
   }
 
-  async renamePane(id: number, name: string) {
-    await invoke('session_rename', { paneId: id, name });
+  async renamePane(id: number, name: string, nameSource: PaneNameSource = 'manual') {
+    await transport.send('session_rename', { paneId: id, name, nameSource });
   }
 
   async setPaneGroup(id: number, group: string) {
-    await invoke('session_set_group', { paneId: id, group });
+    await transport.send('session_set_group', { paneId: id, group });
   }
 
   async setPaneAgent(id: number, agentType: AgentType) {
-    await invoke('session_set_agent', { paneId: id, agentType });
+    await transport.send('session_set_agent', { paneId: id, agentType });
   }
 
   async setPaneStatus(id: number, status: SessionStatus) {
-    await invoke('session_set_status', { paneId: id, status });
+    await transport.send('session_set_status', { paneId: id, status });
   }
 
   async setPaneNote(id: number, note: string) {
-    await invoke('session_set_note', { paneId: id, note });
+    await transport.send('session_set_note', { paneId: id, note });
   }
 
   getRowPanes(rowIndex: number): PaneInfo[] {
@@ -109,7 +108,7 @@ class SessionManager {
   }
 
   scrollToPane(_id: number) {
-    // Implemented by WaterfallArea via setWaterfallArea in ai-handler
+    // Viewport scrolling is exposed through WorkspaceActions ports.
   }
 }
 

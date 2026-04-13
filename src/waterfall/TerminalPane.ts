@@ -1,19 +1,19 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { PaneInfo } from '../session/types';
+import { transport } from '../transport';
 import { configContext } from '../config/ConfigContext';
 import { sessionManager } from '../session/SessionManager';
 import { agentDetector } from '../input/AgentDetector';
 import { modeManager } from '../input/ModeManager';
-import { unmarkAutoNamed } from '../session/AutoNamer';
 import { hintManager } from '../hints/HintManager';
+import { workspaceActions } from '../workspace/WorkspaceActions';
 
 // ── Module-level floating context menu (one singleton shared across panes) ──
 let _ctxMenu: HTMLElement | null = null;
 type WorkspaceScrollModifier = 'meta' | 'control' | 'alt' | 'shift' | 'disabled';
+type UnlistenFn = () => void;
 
 function getCtxMenu(): HTMLElement {
   if (!_ctxMenu) {
@@ -107,7 +107,7 @@ export class TerminalPane {
 
     // Handle user input → send to PTY
     this.term.onData((data) => {
-      invoke('pty_write', { args: { pane_id: this.paneId, data } }).catch(console.error);
+      transport.send('pty_write', { args: { pane_id: this.paneId, data } }).catch(console.error);
     });
 
     // Handle resize
@@ -136,7 +136,7 @@ export class TerminalPane {
 
     // Close button
     this.el.querySelector('.pane-close')?.addEventListener('click', () => {
-      this.destroy();
+      void workspaceActions.dispatch({ type: 'close', target: String(this.paneId) }, { source: 'ui' });
     });
 
     // Click on pane header → set active only (no mode change).
@@ -145,7 +145,7 @@ export class TerminalPane {
     this.el.addEventListener('mousedown', (e) => {
       const target = e.target as HTMLElement;
       if (target.closest('.pane-close')) return;
-      sessionManager.setActivePane(this.paneId);
+      void workspaceActions.dispatch({ type: 'focus', target: String(this.paneId) }, { source: 'ui' });
       if (!target.closest('.pane-header')) {
         modeManager.enterTerminal(this.paneId);
       }
@@ -189,11 +189,16 @@ export class TerminalPane {
       showCtxMenu(e.clientX, e.clientY, [
         {
           label: 'Enter Insert Mode',
-          action: () => { sessionManager.setActivePane(this.paneId); modeManager.enterInsert(); },
+          action: () => {
+            void workspaceActions.dispatch({ type: 'focus', target: String(this.paneId) }, { source: 'ui' });
+            modeManager.enterInsert();
+          },
         },
         {
           label: 'Split Row',
-          action: () => document.dispatchEvent(new CustomEvent('workspace-action', { detail: 'SplitHorizontal' })),
+          action: () => {
+            void workspaceActions.dispatch({ type: 'split' }, { source: 'ui' });
+          },
         },
         {
           label: 'Rename…',
@@ -203,7 +208,13 @@ export class TerminalPane {
           },
         },
         { label: 'Note…', action: () => document.dispatchEvent(new CustomEvent('open-pane-note')) },
-        { label: 'Close', action: () => this.destroy(), danger: true },
+        {
+          label: 'Close',
+          action: () => {
+            void workspaceActions.dispatch({ type: 'close', target: String(this.paneId) }, { source: 'ui' });
+          },
+          danger: true,
+        },
       ]);
     });
     (el.querySelector('.pane-group-badge') as HTMLElement).textContent =
@@ -225,10 +236,10 @@ export class TerminalPane {
     // Register both listeners in parallel so a fast-exiting PTY can't fire
     // pty-closed before the listener is registered.
     const [unlistenData, unlistenClose] = await Promise.all([
-      listen<{ pane_id: number; data: string }>(
+      transport.listen<{ pane_id: number; data: string }>(
         `pty-data-${this.paneId}`,
-        (event) => {
-          const data = event.payload.data;
+        (payload) => {
+          const data = payload.data;
           this.term.write(data);
           // Feed to agent detector
           agentDetector.addOutput(this.paneId, data);
@@ -255,7 +266,7 @@ export class TerminalPane {
           }
         }
       ),
-      listen(`pty-closed-${this.paneId}`, () => {
+      transport.listen(`pty-closed-${this.paneId}`, () => {
         this.term.write('\r\n\x1b[33m[Process exited]\x1b[0m\r\n');
         setTimeout(() => this.destroy(), 300);
       }),
@@ -263,12 +274,6 @@ export class TerminalPane {
 
     this.unlisten = unlistenData;
     this.unlistenClose = unlistenClose;
-
-    // When agent is detected, update session info.
-    // InputBar refreshes automatically via sessionManager.onChange listener.
-    agentDetector.onAgentChange(this.paneId, (agent) => {
-      sessionManager.setPaneAgent(this.paneId, agent);
-    });
   }
 
   /** Begin inline rename on the pane name element. */
@@ -290,8 +295,11 @@ export class TerminalPane {
       nameEl.contentEditable = 'false';
       nameEl.classList.remove('renaming');
       if (newName && newName !== original) {
-        sessionManager.renamePane(this.paneId, newName);
-        unmarkAutoNamed(this.paneId);
+        void workspaceActions.dispatch({
+          type: 'rename',
+          target: String(this.paneId),
+          name: newName,
+        }, { source: 'ui' });
       } else {
         nameEl.textContent = original; // revert if empty or unchanged
       }
@@ -361,14 +369,14 @@ export class TerminalPane {
 
   // Write data directly to PTY (for Workspace AI dispatch)
   async writeCommand(cmd: string) {
-    await invoke('pty_write', { args: { pane_id: this.paneId, data: cmd + '\r' } });
+    await transport.send('pty_write', { args: { pane_id: this.paneId, data: cmd + '\r' } });
   }
 
   fit() {
     try {
       this.fitAddon.fit();
       const { cols, rows } = this.term;
-      invoke('pty_resize', { args: { pane_id: this.paneId, cols, rows } }).catch(console.error);
+      transport.send('pty_resize', { args: { pane_id: this.paneId, cols, rows } }).catch(console.error);
     } catch (_) {}
   }
 
@@ -380,7 +388,7 @@ export class TerminalPane {
     this.term.options.fontSize = size;
     this.fitAddon.fit();
     const { cols, rows } = this.term;
-    invoke('pty_resize', { args: { pane_id: this.paneId, cols, rows } }).catch(console.error);
+    transport.send('pty_resize', { args: { pane_id: this.paneId, cols, rows } }).catch(console.error);
   }
 
   async destroy() {
@@ -393,7 +401,7 @@ export class TerminalPane {
     this.term.dispose();
     const prevRow = this.el.parentElement as HTMLElement | null;  // capture before removal
     this.el.remove();
-    await invoke('pty_kill', { paneId: this.paneId });
+    await transport.send('pty_kill', { paneId: this.paneId });
     this.onClose(this.paneId, prevRow);
   }
 
@@ -542,7 +550,7 @@ export class TerminalPane {
         if (lines === 0) return false;
         const seq = deltaPixels > 0 ? '\x1b[B' : '\x1b[A'; // arrow down / up
         for (let i = 0; i < lines; i++) {
-          invoke('pty_write', { args: { pane_id: this.paneId, data: seq } }).catch(console.error);
+          transport.send('pty_write', { args: { pane_id: this.paneId, data: seq } }).catch(console.error);
         }
         return false;
       }

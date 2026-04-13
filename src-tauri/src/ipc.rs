@@ -1,6 +1,6 @@
 use crate::config::{load_config, SharedConfig};
 use crate::pty::SharedPtyManager;
-use crate::session::{AgentType, SessionStatus, SharedSessionManager};
+use crate::session::{AgentType, PaneNameSource, SessionStatus, SharedSessionManager};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
@@ -96,7 +96,7 @@ pub async fn pty_spawn(
 
     {
         let mut session = session_mgr.lock().unwrap();
-        let _pane = session.create_pane(args.pane_id, cwd, group, pid, row_index);
+        let _pane = session.create_pane(args.pane_id, cwd, group, row_index);
         // Notify frontend of session change
         let _ = app.emit("session:changed", session.all_panes());
         drop(session);
@@ -172,11 +172,16 @@ pub async fn session_set_active(
 pub async fn session_rename(
     pane_id: u32,
     name: String,
+    name_source: Option<String>,
     app: AppHandle,
     session_mgr: State<'_, SharedSessionManager>,
 ) -> Result<(), String> {
+    let source = match name_source.as_deref() {
+        Some("auto") => PaneNameSource::Auto,
+        _ => PaneNameSource::Manual,
+    };
     let mut session = session_mgr.lock().unwrap();
-    session.rename_pane(pane_id, name);
+    session.rename_pane(pane_id, name, source);
     let _ = app.emit("session:changed", session.all_panes());
     Ok(())
 }
@@ -476,7 +481,10 @@ pub struct LlmCompleteArgs {
     pub model: String,
     pub provider: Option<String>,
     pub api_key_env: Option<String>,
+    pub api_key: Option<String>,
     pub base_url: Option<String>,
+    #[serde(default)]
+    pub options: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// Infer provider from model name (mirrors the JS inferProvider logic).
@@ -496,12 +504,62 @@ fn infer_provider(model: &str) -> &'static str {
 }
 
 /// Strip "provider/" prefix from model name before sending to the API.
-fn strip_provider_prefix(model: &str) -> &str {
+fn strip_provider_prefix<'a>(model: &'a str, provider: &str) -> &'a str {
+    let explicit_prefix = format!("{}/", provider);
+    if let Some(rest) = model.strip_prefix(&explicit_prefix) {
+        return rest;
+    }
+
     let prefixes = ["anthropic/", "openai/", "google/", "ollama/", "ollama:"];
     for p in prefixes {
         if let Some(rest) = model.strip_prefix(p) { return rest; }
     }
     model
+}
+
+fn resolve_config_string(value: &str) -> Result<String, String> {
+    if let Some(name) = value.strip_prefix("{env:").and_then(|v| v.strip_suffix('}')) {
+        return std::env::var(name).map_err(|_| format!("Environment variable '{}' is not set", name));
+    }
+
+    if let Some(path) = value.strip_prefix("{file:").and_then(|v| v.strip_suffix('}')) {
+        let path = if let Some(rest) = path.strip_prefix("~/") {
+            dirs::home_dir().unwrap_or_default().join(rest)
+        } else {
+            std::path::PathBuf::from(path)
+        };
+        return std::fs::read_to_string(&path)
+            .map(|s| s.trim().to_string())
+            .map_err(|e| format!("Could not read {:?}: {}", path, e));
+    }
+
+    Ok(value.to_string())
+}
+
+fn option_string(options: &std::collections::BTreeMap<String, serde_json::Value>, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| options.get(*key)?.as_str().map(ToString::to_string))
+}
+
+fn option_u64(options: &std::collections::BTreeMap<String, serde_json::Value>, keys: &[&str]) -> Option<u64> {
+    keys.iter().find_map(|key| options.get(*key)?.as_u64())
+}
+
+fn apply_common_llm_options(
+    body: &mut serde_json::Value,
+    options: &std::collections::BTreeMap<String, serde_json::Value>,
+) {
+    if let Some(v) = option_u64(options, &["maxTokens", "max_tokens"]) {
+        body["max_tokens"] = serde_json::json!(v);
+    }
+    if let Some(v) = options.get("temperature").and_then(|v| v.as_f64()) {
+        body["temperature"] = serde_json::json!(v);
+    }
+    if let Some(v) = options.get("topP").or_else(|| options.get("top_p")).and_then(|v| v.as_f64()) {
+        body["top_p"] = serde_json::json!(v);
+    }
+    if let Some(v) = option_string(options, &["reasoningEffort", "reasoning_effort"]) {
+        body["reasoning_effort"] = serde_json::json!(v);
+    }
 }
 
 #[tauri::command]
@@ -512,19 +570,43 @@ pub async fn llm_complete(args: LlmCompleteArgs) -> Result<String, String> {
         .unwrap_or_else(|| infer_provider(&args.model))
         .to_string();
 
-    // Resolve API key from environment variable
-    let api_key = args.api_key_env
+    let base_url = args.base_url
+        .clone()
+        .or_else(|| option_string(&args.options, &["baseURL", "base_url"]))
+        .map(|value| resolve_config_string(&value))
+        .transpose()?;
+
+    // Resolve API key from OpenCode-style {env:...}/{file:...}, or legacy env var.
+    let api_key = args.api_key
         .as_deref()
         .filter(|s| !s.is_empty())
-        .and_then(|env| std::env::var(env).ok())
+        .map(resolve_config_string)
+        .transpose()?
+        .or_else(|| {
+            args.api_key_env
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .and_then(|env| std::env::var(env).ok())
+        })
+        .or_else(|| {
+            option_string(&args.options, &["apiKey", "api_key"])
+                .and_then(|value| resolve_config_string(&value).ok())
+        })
+        .or_else(|| default_api_key_env(&provider).and_then(|env| std::env::var(env).ok()))
         .unwrap_or_default();
 
-    let model = strip_provider_prefix(&args.model).to_string();
+    let model = strip_provider_prefix(&args.model, &provider).to_string();
     let client = reqwest::Client::new();
+    let provider_kind = match provider.as_str() {
+        "anthropic" | "openai" | "google" | "ollama" => provider.as_str(),
+        "openai-compatible" => "openai",
+        _ if base_url.is_some() => "openai",
+        _ => provider.as_str(),
+    };
 
-    match provider.as_str() {
+    match provider_kind {
         "anthropic" => {
-            let base = args.base_url.as_deref().unwrap_or("https://api.anthropic.com");
+            let base = base_url.as_deref().unwrap_or("https://api.anthropic.com");
             let url = format!("{}/v1/messages", base.trim_end_matches('/'));
 
             let system: Vec<_> = args.messages.iter()
@@ -536,13 +618,23 @@ pub async fn llm_complete(args: LlmCompleteArgs) -> Result<String, String> {
                 .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
                 .collect();
 
+            let max_tokens = option_u64(&args.options, &["maxTokens", "max_tokens"]).unwrap_or(1024);
             let mut body = serde_json::json!({
                 "model": model,
-                "max_tokens": 1024,
+                "max_tokens": max_tokens,
                 "messages": chat,
             });
             if !system.is_empty() {
                 body["system"] = serde_json::json!(system.join("\n\n"));
+            }
+            if let Some(thinking) = args.options.get("thinking") {
+                body["thinking"] = thinking.clone();
+            }
+            if let Some(v) = args.options.get("temperature").and_then(|v| v.as_f64()) {
+                body["temperature"] = serde_json::json!(v);
+            }
+            if let Some(v) = args.options.get("topP").or_else(|| args.options.get("top_p")).and_then(|v| v.as_f64()) {
+                body["top_p"] = serde_json::json!(v);
             }
 
             let res = client.post(&url)
@@ -565,34 +657,36 @@ pub async fn llm_complete(args: LlmCompleteArgs) -> Result<String, String> {
         }
 
         "openai" => {
-            let base = args.base_url.as_deref().unwrap_or("https://api.openai.com");
+            let base = base_url.as_deref().unwrap_or("https://api.openai.com");
             let url = format!("{}/v1/chat/completions", base.trim_end_matches('/'));
 
             let msgs: Vec<_> = args.messages.iter()
                 .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
                 .collect();
-            let body = serde_json::json!({ "model": model, "messages": msgs });
+            let mut body = serde_json::json!({ "model": model, "messages": msgs });
+            apply_common_llm_options(&mut body, &args.options);
 
-            let res = client.post(&url)
-                .header("Authorization", format!("Bearer {}", api_key))
-                .header("content-type", "application/json")
-                .json(&body)
+            let mut req = client.post(&url).header("content-type", "application/json").json(&body);
+            if !api_key.is_empty() {
+                req = req.header("Authorization", format!("Bearer {}", api_key));
+            }
+            let res = req
                 .send()
                 .await
-                .map_err(|e| format!("OpenAI request failed: {}", e))?;
+                .map_err(|e| format!("OpenAI-compatible request failed: {}", e))?;
 
             if !res.status().is_success() {
                 let status = res.status().as_u16();
                 let text = res.text().await.unwrap_or_default();
-                return Err(format!("OpenAI {}: {}", status, text.trim()));
+                return Err(format!("OpenAI-compatible {}: {}", status, text.trim()));
             }
             let data: serde_json::Value = res.json().await
-                .map_err(|e| format!("OpenAI parse error: {}", e))?;
+                .map_err(|e| format!("OpenAI-compatible parse error: {}", e))?;
             Ok(data["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string())
         }
 
         "google" => {
-            let base = args.base_url.as_deref().unwrap_or("https://generativelanguage.googleapis.com");
+            let base = base_url.as_deref().unwrap_or("https://generativelanguage.googleapis.com");
             let url = format!(
                 "{}/v1beta/models/{}:generateContent",
                 base.trim_end_matches('/'), model
@@ -616,6 +710,12 @@ pub async fn llm_complete(args: LlmCompleteArgs) -> Result<String, String> {
                     "parts": [{ "text": system.join("\n\n") }]
                 });
             }
+            if let Some(max_tokens) = option_u64(&args.options, &["maxTokens", "max_tokens"]) {
+                body["generationConfig"]["maxOutputTokens"] = serde_json::json!(max_tokens);
+            }
+            if let Some(temperature) = args.options.get("temperature").and_then(|v| v.as_f64()) {
+                body["generationConfig"]["temperature"] = serde_json::json!(temperature);
+            }
 
             let res = client.post(&url)
                 .header("Authorization", format!("Bearer {}", api_key))
@@ -637,19 +737,21 @@ pub async fn llm_complete(args: LlmCompleteArgs) -> Result<String, String> {
         }
 
         "ollama" => {
-            let base = args.base_url.as_deref().unwrap_or("http://localhost:11434");
+            let base = base_url.as_deref().unwrap_or("http://localhost:11434");
             let url = format!("{}/api/chat", base.trim_end_matches('/'));
 
-            // Strip leading "ollama/" or "ollama:" if present
             let ollama_model = model.trim_start_matches("ollama/").trim_start_matches("ollama:");
             let msgs: Vec<_> = args.messages.iter()
                 .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
                 .collect();
-            let body = serde_json::json!({
+            let mut body = serde_json::json!({
                 "model": ollama_model,
                 "messages": msgs,
                 "stream": false,
             });
+            if let Some(options) = args.options.get("options") {
+                body["options"] = options.clone();
+            }
 
             let res = client.post(&url)
                 .header("content-type", "application/json")
@@ -669,10 +771,98 @@ pub async fn llm_complete(args: LlmCompleteArgs) -> Result<String, String> {
         }
 
         other => Err(format!(
-            "Unknown provider \"{}\". Supported: anthropic, openai, google, ollama, claude-cli",
+            "Unknown provider \"{}\". Use anthropic/openai/google/ollama or configure a baseURL for an OpenAI-compatible provider.",
             other
         )),
     }
+}
+
+fn default_api_key_env(provider: &str) -> Option<&'static str> {
+    match provider {
+        "anthropic" => Some("ANTHROPIC_API_KEY"),
+        "openai" => Some("OPENAI_API_KEY"),
+        "google" => Some("GOOGLE_API_KEY"),
+        _ => None,
+    }
+}
+
+/// AI-friendly pane context: structured metadata + recent stripped scrollback.
+/// Returns `None` if the pane does not exist.
+#[derive(Debug, Serialize)]
+pub struct PaneContext {
+    pub info: crate::session::PaneInfo,
+    /// Last N lines of PTY output with ANSI escape codes stripped.
+    pub recent_output: Vec<String>,
+}
+
+/// Maximum lines of scrollback included in pane context.
+const PANE_CONTEXT_OUTPUT_LINES: usize = 50;
+
+#[tauri::command]
+pub async fn get_pane_context(
+    pane_id: u32,
+    pty_mgr: State<'_, SharedPtyManager>,
+    session_mgr: State<'_, SharedSessionManager>,
+) -> Result<Option<PaneContext>, String> {
+    let info = {
+        let session = session_mgr.lock().unwrap();
+        session.all_panes().into_iter().find(|p| p.id == pane_id)
+    };
+    let Some(info) = info else { return Ok(None) };
+
+    let raw_lines = {
+        let pty = pty_mgr.lock().unwrap();
+        pty.get_scrollback(pane_id)
+    };
+
+    // Strip ANSI escape sequences so the AI receives clean text.
+    let recent_output = raw_lines
+        .iter()
+        .rev()
+        .take(PANE_CONTEXT_OUTPUT_LINES)
+        .rev()
+        .map(|line| strip_ansi(line))
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+
+    Ok(Some(PaneContext { info, recent_output }))
+}
+
+/// Very small ANSI stripper: removes ESC-based sequences common in terminal output.
+/// This intentionally avoids pulling in a full-featured crate for a single use-case.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            match chars.peek() {
+                // CSI sequence: ESC [ ... final-byte (0x40–0x7E)
+                Some('[') => {
+                    chars.next(); // consume '['
+                    for c in chars.by_ref() {
+                        if ('\x40'..='\x7e').contains(&c) { break; }
+                    }
+                }
+                // OSC sequence: ESC ] ... ST (BEL or ESC \)
+                Some(']') => {
+                    chars.next(); // consume ']'
+                    loop {
+                        match chars.next() {
+                            None | Some('\x07') => break,
+                            Some('\x1b') => { chars.next(); break; } // ESC \
+                            _ => {}
+                        }
+                    }
+                }
+                // Other two-char sequences: skip next char
+                Some(_) => { chars.next(); }
+                None => {}
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 #[tauri::command]
@@ -692,6 +882,8 @@ pub struct PaneSnapshot {
     pub group: String,
     pub note: String,
     pub cwd: String,
+    #[serde(default)]
+    pub name_source: Option<PaneNameSource>,
     pub row_index: usize,
     pub pane_index: usize,
     pub is_active: bool,

@@ -1,10 +1,9 @@
 import type { PaneInfo } from '../session/types';
 import { sessionManager } from '../session/SessionManager';
-import type { WaterfallArea } from '../waterfall/WaterfallArea';
+import { workspaceActions } from '../workspace/WorkspaceActions';
 
 export class SessionSidebar {
   readonly el: HTMLElement;
-  private waterfallArea: WaterfallArea | null = null;
   private visible = false;
 
   constructor() {
@@ -14,10 +13,6 @@ export class SessionSidebar {
     sessionManager.onChange((panes, activePaneId) => {
       this.render(panes, activePaneId);
     });
-  }
-
-  setWaterfallArea(area: WaterfallArea) {
-    this.waterfallArea = area;
   }
 
   toggle() {
@@ -63,8 +58,7 @@ export class SessionSidebar {
     this.el.querySelectorAll('.sb-item').forEach(item => {
       item.addEventListener('click', () => {
         const id = parseInt((item as HTMLElement).dataset.id || '0');
-        sessionManager.setActivePane(id);
-        this.waterfallArea?.scrollToPane(id);
+        void workspaceActions.dispatch({ type: 'focus', target: String(id) }, { source: 'ui' });
       });
     });
 
@@ -72,7 +66,7 @@ export class SessionSidebar {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const id = parseInt((btn as HTMLElement).dataset.closeId || '0');
-        this.waterfallArea?.getPane(id)?.destroy();
+        void workspaceActions.dispatch({ type: 'close', target: String(id) }, { source: 'ui' });
       });
     });
   }

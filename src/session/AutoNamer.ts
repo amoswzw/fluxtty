@@ -203,13 +203,3 @@ export function nameFromCwd(cwd: string): string | null {
   const dir = basename(cwd.replace(/\/$/, ''));
   return dir || null;
 }
-
-// ── Auto-named pane tracking ──────────────────────────────────────────────────
-// Panes in this set have names managed by AutoNamer.
-// Removed when the user manually renames a pane.
-
-const autoNamedPanes = new Set<number>();
-
-export function markAutoNamed(paneId: number)   { autoNamedPanes.add(paneId); }
-export function unmarkAutoNamed(paneId: number) { autoNamedPanes.delete(paneId); }
-export function isAutoNamed(paneId: number)     { return autoNamedPanes.has(paneId); }

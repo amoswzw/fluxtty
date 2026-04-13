@@ -2,6 +2,8 @@ export type SessionStatus = 'idle' | 'running' | 'error';
 
 export type AgentType = 'none' | 'claude' | 'codex' | 'aider' | 'unknown';
 
+export type PaneNameSource = 'auto' | 'manual';
+
 export interface PaneInfo {
   id: number;
   name: string;
@@ -9,10 +11,16 @@ export interface PaneInfo {
   note: string;
   status: SessionStatus;
   cwd: string;
-  pty_pid: number;
+  name_source: PaneNameSource;
   agent_type: AgentType;
   row_index: number;
   pane_index: number;
+  /** Last command submitted to the shell (from OSC 133;B). Null until first command runs. */
+  last_command: string | null;
+  /** Exit code of the last completed command (from OSC 133;D). Null until first command completes. */
+  last_exit_code: number | null;
+  /** Whether the pane is currently in alternate screen mode (e.g. vim, htop). */
+  alternate_screen: boolean;
 }
 
 export interface RowInfo {

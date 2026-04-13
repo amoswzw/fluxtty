@@ -87,6 +87,7 @@ pub fn run() {
             pty_resize,
             pty_kill,
             pty_get_scrollback,
+            get_pane_context,
             session_list,
             session_set_active,
             session_rename,
