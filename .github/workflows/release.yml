@@ -128,5 +128,5 @@ jobs:
         run: |
           VERSION="${TAG_NAME#v}"
           gh workflow run update-cask.yml \
-            --repo wangzewang/homebrew-tap \
+            --repo amoswzw/homebrew-tap \
             --field version="$VERSION"

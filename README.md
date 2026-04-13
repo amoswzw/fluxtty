@@ -14,9 +14,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/wangzewang/fluxtty/actions/workflows/ci.yml"><img src="https://github.com/wangzewang/fluxtty/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://github.com/wangzewang/fluxtty/actions/workflows/codeql.yml"><img src="https://github.com/wangzewang/fluxtty/actions/workflows/codeql.yml/badge.svg" alt="CodeQL" /></a>
-  <a href="https://github.com/wangzewang/fluxtty/releases"><img src="https://img.shields.io/github/v/release/wangzewang/fluxtty" alt="Release" /></a>
+  <a href="https://github.com/amoswzw/fluxtty/actions/workflows/ci.yml"><img src="https://github.com/amoswzw/fluxtty/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/amoswzw/fluxtty/actions/workflows/codeql.yml"><img src="https://github.com/amoswzw/fluxtty/actions/workflows/codeql.yml/badge.svg" alt="CodeQL" /></a>
+  <a href="https://github.com/amoswzw/fluxtty/releases"><img src="https://img.shields.io/github/v/release/amoswzw/fluxtty" alt="Release" /></a>
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License" />
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey" alt="Platform" />
   <img src="https://img.shields.io/badge/Tauri-2.x-orange" alt="Tauri" />
@@ -24,7 +24,7 @@
 </p>
 
 <p align="center">
-  <a href="https://wangzewang.github.io/fluxtty/"><strong>Live demo and landing page →</strong></a>
+  <a href="https://amoswzw.github.io/fluxtty/"><strong>Live demo and landing page →</strong></a>
 </p>
 
 <video src="https://github.com/user-attachments/assets/6b9ba19d-14c2-43d3-8e6a-6d3353674bb6" controls autoplay loop muted width="100%"></video>
@@ -47,13 +47,13 @@
 ### Homebrew (macOS)
 
 ```bash
-brew tap wangzewang/tap
+brew tap amoswzw/tap
 brew install --cask fluxtty
 ```
 
 ### Download
 
-**[→ Download latest release](https://github.com/wangzewang/fluxtty/releases/latest)**
+**[→ Download latest release](https://github.com/amoswzw/fluxtty/releases/latest)**
 
 | Platform | File |
 |---|---|
@@ -67,7 +67,7 @@ brew install --cask fluxtty
 **Prerequisites:** [Rust](https://rustup.rs/) 1.77+, [Node.js](https://nodejs.org/) 18+, [Tauri v2 prerequisites](https://tauri.app/start/prerequisites/)
 
 ```bash
-git clone https://github.com/wangzewang/fluxtty
+git clone https://github.com/amoswzw/fluxtty
 cd fluxtty
 npm install
 npm run tauri build

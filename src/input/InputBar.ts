@@ -87,6 +87,7 @@ export class InputBar {
   private normalGgPending = false;
   private normalGgTimer: ReturnType<typeof setTimeout> | null = null;
   private isComposing = false;
+  private compositionJustEnded = false;
   private liveTypingMirrorSynced = true;
 
   // Normal mode: inline command sub-state (activated by ':')
@@ -204,6 +205,7 @@ export class InputBar {
 
   private handleCompositionEnd(e: CompositionEvent) {
     this.isComposing = false;
+    this.compositionJustEnded = true;
     const mode = modeManager.getMode();
     if (mode.type !== 'insert') return;
     if (!configContext.get().input.live_typing) return;
@@ -264,6 +266,20 @@ export class InputBar {
   }
 
   private handleKeyDown(e: KeyboardEvent) {
+    // After compositionend, the IME-confirming key (e.g. space, number) fires a
+    // keydown with isComposing=false. Swallow single printable keys here to
+    // prevent phantom spaces or digits from appearing in the input or being
+    // forwarded to the PTY.
+    if (this.compositionJustEnded && !e.isComposing) {
+      this.compositionJustEnded = false;
+      if (e.key.length === 1) {
+        e.preventDefault();
+        return;
+      }
+    } else {
+      this.compositionJustEnded = false;
+    }
+
     const composing = e.isComposing || this.isComposing;
 
     // ── Pane selector navigation ──────────────────────────────────────
