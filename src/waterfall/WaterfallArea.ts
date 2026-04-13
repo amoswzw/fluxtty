@@ -640,6 +640,11 @@ export class WaterfallArea {
           modeManager.enterNormal();
         }
       }
+      // Re-entering Insert while already in Insert is a no-op in ModeManager,
+      // so the input bar may need focus restored after a pane-creation action.
+      if (modeManager.getMode().type === 'insert') {
+        document.dispatchEvent(new CustomEvent('focus-inputbar'));
+      }
       // Auto-name from cwd if still on default name
       const spawned = sessionManager.getPane(paneId);
       if (spawned) {
