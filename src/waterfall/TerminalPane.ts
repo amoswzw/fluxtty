@@ -68,6 +68,8 @@ export class TerminalPane {
   private destroyed = false;
   private info: PaneInfo;
   private workspaceScrollModifier: WorkspaceScrollModifier;
+  private terminalWheelLineRemainder = 0;
+  private alternateWheelLineRemainder = 0;
 
 
   constructor(info: PaneInfo, onClose: (id: number, prevRow: HTMLElement | null) => void) {
@@ -456,14 +458,48 @@ export class TerminalPane {
     return e.deltaY;
   }
 
+  private getTerminalLineHeight(): number {
+    const screenEl = this.termContainer.querySelector('.xterm-screen') as HTMLElement | null;
+    const screenHeight = screenEl?.getBoundingClientRect().height ?? 0;
+    if (screenHeight > 0 && this.term.rows > 0) {
+      return Math.max(1, screenHeight / this.term.rows);
+    }
+
+    const fontSize = this.term.options.fontSize ?? 13;
+    const lineHeight = this.term.options.lineHeight ?? 1;
+    return Math.max(1, fontSize * lineHeight);
+  }
+
+  private consumeWheelLines(deltaPixels: number, buffer: 'terminal' | 'alternate'): number {
+    const lineDelta = deltaPixels / this.getTerminalLineHeight();
+    const nextRemainder = buffer === 'terminal'
+      ? this.terminalWheelLineRemainder + lineDelta
+      : this.alternateWheelLineRemainder + lineDelta;
+    const wholeLines = nextRemainder > 0 ? Math.floor(nextRemainder) : Math.ceil(nextRemainder);
+    const remainder = nextRemainder - wholeLines;
+
+    if (buffer === 'terminal') {
+      this.terminalWheelLineRemainder = remainder;
+    } else {
+      this.alternateWheelLineRemainder = remainder;
+    }
+
+    return wholeLines;
+  }
+
   private scrollTerminalViewport(deltaPixels: number) {
     // Use term.scrollLines() rather than viewport.scrollTop so xterm's internal
     // ydisp is updated synchronously. With scrollTop the DOM scroll event fires
     // asynchronously, so a concurrent term.write() call sees ydisp still at the
     // bottom and auto-scrolls back, overriding the user's scroll.
-    const approxLineHeight = Math.max(1, (this.term.options.fontSize ?? 13) * 1.2);
-    const lines = deltaPixels / approxLineHeight;
-    if (Math.abs(lines) >= 1) this.term.scrollLines(lines > 0 ? Math.floor(lines) : Math.ceil(lines));
+    const lines = this.consumeWheelLines(deltaPixels, 'terminal');
+    if (lines === 0) return;
+
+    const before = this.term.buffer.active.viewportY;
+    this.term.scrollLines(lines);
+    if (this.term.buffer.active.viewportY === before) {
+      this.terminalWheelLineRemainder = 0;
+    }
   }
 
   private routeWheel(e: WheelEvent, source: 'container' | 'xterm'): boolean {
@@ -502,8 +538,8 @@ export class TerminalPane {
         // sequences so the running application still receives the input.
         e.preventDefault();
         e.stopPropagation();
-        const approxLineHeight = Math.max(1, (this.term.options.fontSize ?? 13) * 1.2);
-        const lines = Math.max(1, Math.round(Math.abs(deltaPixels) / approxLineHeight));
+        const lines = Math.abs(this.consumeWheelLines(deltaPixels, 'alternate'));
+        if (lines === 0) return false;
         const seq = deltaPixels > 0 ? '\x1b[B' : '\x1b[A'; // arrow down / up
         for (let i = 0; i < lines; i++) {
           invoke('pty_write', { args: { pane_id: this.paneId, data: seq } }).catch(console.error);
@@ -518,6 +554,9 @@ export class TerminalPane {
     }
 
     hintManager.record({ type: 'terminal-wheel', withModifier: false });
+    if (source === 'xterm') {
+      return true;
+    }
     e.preventDefault();
     e.stopPropagation();
     this.scrollTerminalViewport(deltaPixels);
@@ -527,6 +566,10 @@ export class TerminalPane {
   private handleContainerWheel = (e: WheelEvent) => {
     const target = e.target instanceof HTMLElement ? e.target : null;
     const inXterm = !!target?.closest('.xterm');
+
+    if (inXterm && !this.shouldRouteWheelToWorkspace(e) && this.term.buffer.active.type !== 'alternate') {
+      return;
+    }
 
     // In Terminal mode xterm is focused — leave alternate-screen events on
     // xterm's native path so mouse-tracking protocol reaches the PTY.
