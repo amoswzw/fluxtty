@@ -458,12 +458,9 @@ export class WaterfallArea {
     if (!target) return;
 
     // Terminal content has its own explicit wheel routing in TerminalPane.
-    // Still cancel the browser's default scroll-chain here so workspace
-    // scrolling can never leak through when the terminal is at an edge.
+    // Do not cancel it here: this listener runs in capture phase, and calling
+    // preventDefault() before xterm sees the event breaks scrollback scrolling.
     if (target.closest('.term-container') || target.closest('.xterm')) {
-      if (!this.shouldRouteWheelToWorkspace(e)) {
-        e.preventDefault();
-      }
       return;
     }
 

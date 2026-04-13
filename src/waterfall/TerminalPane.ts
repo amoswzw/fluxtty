@@ -554,9 +554,6 @@ export class TerminalPane {
     }
 
     hintManager.record({ type: 'terminal-wheel', withModifier: false });
-    if (source === 'xterm') {
-      return true;
-    }
     e.preventDefault();
     e.stopPropagation();
     this.scrollTerminalViewport(deltaPixels);
