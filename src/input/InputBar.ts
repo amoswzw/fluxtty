@@ -24,9 +24,15 @@ function longestCommonPrefix(strs: string[]): string {
 }
 
 function isEditableElement(el: Element | null): boolean {
+  if (isXtermHelperInput(el)) return false;
   return el instanceof HTMLTextAreaElement
     || el instanceof HTMLInputElement
     || (el instanceof HTMLElement && el.isContentEditable);
+}
+
+function isXtermHelperInput(el: Element | null): boolean {
+  if (!(el instanceof HTMLTextAreaElement)) return false;
+  return el.classList.contains('xterm-helper-textarea');
 }
 
 function splitShellInputForCompletion(input: string): { prefix: string; currentWord: string } {
@@ -904,6 +910,9 @@ export class InputBar {
       }
       case 'insert': {
         this.inputEl.readOnly = false;
+        if (configContext.get().input.live_typing && !this.liveTypingMirrorSynced) {
+          this.resetLiveTypingMirror();
+        }
         this.refreshInsertPrompt();
         this.inputEl.focus();
         break;
