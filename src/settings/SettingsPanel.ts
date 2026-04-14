@@ -858,6 +858,7 @@ const SECTIONS: Section[] = [
         label: 'Layout (Waterfall)',
         fields: [
           { path: 'waterfall.row_height_mode',  label: 'Row height mode',  type: 'select', opts: ['viewport','fixed'] },
+          { path: 'waterfall.min_row_lines',    label: 'Min row lines',    type: 'number', min: 5,  max: 200, desc: 'viewport mode only — min lines per row before waterfall scrolling kicks in' },
           { path: 'waterfall.fixed_row_height', label: 'Fixed row height', type: 'number', min: 10, max: 200, desc: 'rows (used when mode = fixed)' },
           { path: 'waterfall.scroll_snap',      label: 'Scroll snap',      type: 'checkbox' },
           { path: 'waterfall.new_pane_focus',   label: 'Focus new pane',   type: 'checkbox' },
