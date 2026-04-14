@@ -1,6 +1,6 @@
 {
   "name": "fluxtty",
-  "version": "0.1.9",
+  "version": "0.1.8",
   "type": "module",
   "description": "Multi-session developer workspace terminal",
   "scripts": {

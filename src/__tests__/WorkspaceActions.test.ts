@@ -25,6 +25,12 @@ function emitCommandComplete(paneId: number, exitCode: number) {
   }
 }
 
+function emit(event: string, payload: unknown) {
+  for (const handler of registeredListeners.get(event) ?? []) {
+    handler(payload);
+  }
+}
+
 // ── WorkspaceState mock (for `read` action) ───────────────────────────────────
 vi.mock('../workspace/WorkspaceState', () => ({
   getPaneContext: vi.fn().mockResolvedValue({
@@ -37,6 +43,7 @@ vi.mock('../workspace/WorkspaceState', () => ({
 }));
 
 import { workspaceActions, type WorkspaceActionPorts } from '../workspace/WorkspaceActions';
+import { planExecutor } from '../ai/plan-executor';
 import type { PaneInfo } from '../session/types';
 
 // ── Shared test helpers ───────────────────────────────────────────────────────
@@ -95,6 +102,7 @@ function makePorts(panes: PaneInfo[]): WorkspaceActionPorts {
 
 beforeEach(() => {
   registeredListeners.clear();
+  planExecutor.clearAll();
 });
 
 // ── run-await ─────────────────────────────────────────────────────────────────
@@ -166,6 +174,48 @@ describe('read action', () => {
   });
 });
 
+// ── agent-send ────────────────────────────────────────────────────────────────
+
+describe('agent-send action', () => {
+  it('sends a message to an agent pane and returns the new turn output', async () => {
+    const pane = makePane({ id: 1, name: 'agent', agent_type: 'claude' });
+    const ports = makePorts([pane]);
+    workspaceActions.configure(ports);
+
+    const promise = workspaceActions.dispatch({
+      type: 'agent-send',
+      target: 'agent',
+      message: 'summarize status',
+      timeout_ms: 1_000,
+    });
+
+    await vi.waitFor(() => registeredListeners.has('pty-data-1'));
+    emit('pty-data-1', { pane_id: 1, data: 'summarize status\r\nWorking...\r\nDone\r\n>\r\n' });
+
+    const result = await promise;
+    expect(result.ok).toBe(true);
+    expect(result.message).toContain('Working...');
+    expect(result.message).toContain('Done');
+    expect((ports as WorkspaceActionPorts & { _writes: Array<[number, string]> })._writes)
+      .toContainEqual([1, 'summarize status\r']);
+  });
+
+  it('fails agent-send for plain shell panes', async () => {
+    const pane = makePane({ id: 1, name: 'frontend', agent_type: 'none' });
+    workspaceActions.configure(makePorts([pane]));
+
+    const result = await workspaceActions.dispatch({
+      type: 'agent-send',
+      target: 'frontend',
+      message: 'do work',
+      timeout_ms: 50,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('No agent running');
+  });
+});
+
 // ── pipeline ──────────────────────────────────────────────────────────────────
 
 describe('pipeline action', () => {
@@ -173,39 +223,41 @@ describe('pipeline action', () => {
     const pane = makePane({ id: 1, name: 'frontend' });
     workspaceActions.configure(makePorts([pane]));
 
-    const promise = workspaceActions.dispatch({
+    const queued = await workspaceActions.dispatch({
       type: 'pipeline',
       label: 'Build',
       steps: [{ label: 'compile', actions: [{ target: 'frontend', cmd: 'npm run build' }] }],
     });
+    expect(queued.message).toContain('Confirm?');
 
+    const promise = planExecutor.handleConfirm('y');
     await vi.waitFor(() => registeredListeners.has('pane:command_complete'));
     emitCommandComplete(1, 0);
 
     const result = await promise;
-    expect(result.ok).toBe(true);
-    expect(result.message).toContain('compile');
-    expect(result.message).toContain('exit 0');
+    expect(result).toContain('compile');
+    expect(result).toContain('exit 0');
   });
 
   it('stops at prev-success when first step fails', async () => {
     const pane = makePane({ id: 1, name: 'frontend' });
     workspaceActions.configure(makePorts([pane]));
 
-    const promise = workspaceActions.dispatch({
+    const queued = await workspaceActions.dispatch({
       type: 'pipeline',
       steps: [
         { label: 'build', actions: [{ target: 'frontend', cmd: 'npm run build' }] },
         { label: 'deploy', condition: 'prev-success', actions: [{ target: 'frontend', cmd: './deploy.sh' }] },
       ],
     });
+    expect(queued.message).toContain('Confirm?');
 
+    const promise = planExecutor.handleConfirm('y');
     await vi.waitFor(() => registeredListeners.has('pane:command_complete'));
     emitCommandComplete(1, 1); // build fails
 
     const result = await promise;
-    expect(result.ok).toBe(true);
-    expect(result.message).toContain('Stopped before "deploy"');
+    expect(result).toContain('Stopped before "deploy"');
   });
 
   it('runs parallel step actions simultaneously', async () => {
@@ -220,7 +272,7 @@ describe('pipeline action', () => {
       return originalDispatch(action);
     });
 
-    const promise = workspaceActions.dispatch({
+    const queued = await workspaceActions.dispatch({
       type: 'pipeline',
       steps: [
         {
@@ -232,13 +284,15 @@ describe('pipeline action', () => {
         },
       ],
     });
+    expect(queued.message).toContain('Confirm?');
 
+    const promise = planExecutor.handleConfirm('y');
     await vi.waitFor(() => (registeredListeners.get('pane:command_complete') ?? []).length >= 2);
     emitCommandComplete(1, 0);
     emitCommandComplete(2, 0);
 
     const result = await promise;
-    expect(result.ok).toBe(true);
+    expect(result).toContain('exit 0');
     vi.restoreAllMocks();
   });
 
@@ -246,20 +300,21 @@ describe('pipeline action', () => {
     const pane = makePane({ id: 1, name: 'frontend' });
     workspaceActions.configure(makePorts([pane]));
 
-    const promise = workspaceActions.dispatch({
+    const queued = await workspaceActions.dispatch({
       type: 'pipeline',
       steps: [
         { label: 'build', actions: [{ target: 'frontend', cmd: 'npm run build' }] },
         { label: 'rollback', condition: 'prev-fail', actions: [{ target: 'frontend', cmd: './rollback.sh' }] },
       ],
     });
+    expect(queued.message).toContain('Confirm?');
 
+    const promise = planExecutor.handleConfirm('y');
     await vi.waitFor(() => registeredListeners.has('pane:command_complete'));
     emitCommandComplete(1, 0); // build succeeds
 
     const result = await promise;
-    expect(result.ok).toBe(true);
-    expect(result.message).toContain('Skipped "rollback"');
+    expect(result).toContain('Skipped "rollback"');
   });
 
   it('sequential step actions run one at a time', async () => {
@@ -268,7 +323,7 @@ describe('pipeline action', () => {
 
     const completionOrder: number[] = [];
 
-    const promise = workspaceActions.dispatch({
+    const queued = await workspaceActions.dispatch({
       type: 'pipeline',
       steps: [
         {
@@ -280,8 +335,10 @@ describe('pipeline action', () => {
         },
       ],
     });
+    expect(queued.message).toContain('Confirm?');
 
     // Wait for step1's listener, then complete it.
+    const promise = planExecutor.handleConfirm('y');
     await vi.waitFor(() => (registeredListeners.get('pane:command_complete') ?? []).length >= 1);
     completionOrder.push(1);
     emitCommandComplete(1, 0); // step1 done
@@ -294,7 +351,7 @@ describe('pipeline action', () => {
     emitCommandComplete(1, 0); // step2 done
 
     const result = await promise;
-    expect(result.ok).toBe(true);
+    expect(result).toContain('exit 0');
     expect(completionOrder).toEqual([1, 2]);
   });
 });

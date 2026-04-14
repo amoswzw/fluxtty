@@ -35,6 +35,14 @@ export function waitForCommandComplete(
       clearTimeout(timer);
       unlisten?.();
       resolve({ exitCode: payload.exit_code });
-    }).then(fn => { unlisten = fn; });
+    }).then(fn => {
+      if (settled) fn();
+      else unlisten = fn;
+    }).catch(err => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err instanceof Error ? err : new Error(String(err)));
+    });
   });
 }

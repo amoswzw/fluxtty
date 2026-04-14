@@ -3,6 +3,14 @@ import { configContext } from '../config/ConfigContext';
 import { llmClient } from '../ai/llm-client';
 import { hintManager } from '../hints/HintManager';
 import { modeManager } from '../input/ModeManager';
+import {
+  KNOWN_MODELS,
+  KNOWN_PROVIDERS,
+  defaultApiKeyPlaceholder,
+  defaultBaseUrlPlaceholder,
+  isCliModel,
+  withBuiltinProviderDefaults,
+} from '../ai/model-catalog';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -141,42 +149,6 @@ function kbLabel(key: string, mods: string | undefined): string {
   return parts.join('+');
 }
 
-const KNOWN_PROVIDERS = [
-  'anthropic',
-  'openai',
-  'google',
-  'ollama',
-  'lmstudio',
-  'openrouter',
-  'claude-cli',
-];
-
-const KNOWN_MODELS = [
-  'none',
-  'claude-cli',
-  // Anthropic
-  'anthropic/claude-sonnet-4-5',
-  'anthropic/claude-opus-4-1',
-  'anthropic/claude-haiku-4-5',
-  // OpenAI
-  'openai/gpt-5',
-  'openai/gpt-5-mini',
-  'openai/gpt-4o',
-  // Google
-  'google/gemini-2.5-pro',
-  'google/gemini-2.5-flash',
-  // Ollama (common local models)
-  'ollama/llama3',
-  'ollama/llama3.1',
-  'ollama/mistral',
-  'ollama/qwen2.5',
-  'ollama/deepseek-r1',
-  'ollama/phi4',
-  // OpenAI-compatible examples
-  'lmstudio/google/gemma-3n-e4b',
-  'openrouter/anthropic/claude-sonnet-4.5',
-];
-
 function ensureAiProviderMap(wai: any): Record<string, any> {
   if (!wai.provider || typeof wai.provider === 'string') {
     const legacy = typeof wai.provider === 'string' ? wai.provider.trim() : '';
@@ -195,6 +167,7 @@ function splitOpenCodeModelId(model: string, providers: Record<string, any>): { 
   const inferred = trimmed.startsWith('claude-') ? 'anthropic'
     : trimmed.startsWith('gpt-') || trimmed.startsWith('o') ? 'openai'
       : trimmed.startsWith('gemini-') ? 'google'
+        : trimmed.startsWith('glm-') ? 'zai'
         : Object.keys(providers)[0] ?? 'openai';
   return { providerId: inferred, modelKey: trimmed };
 }
@@ -1023,15 +996,16 @@ const SECTIONS: Section[] = [
             el.innerHTML = '';
             const model: string = wai.model ?? 'none';
             const isNone = !model || model === 'none';
-            const isCli = model === 'claude-cli';
+            const isCli = isCliModel(model);
             const providers = ensureAiProviderMap(wai);
             const { providerId, modelKey } = splitOpenCodeModelId(model, providers);
             if (!isNone && !isCli && !providers[providerId]) {
               providers[providerId] = { options: {}, models: {} };
             }
-            const providerCfg = providers[providerId] ?? { options: {}, models: {} };
+            let providerCfg = withBuiltinProviderDefaults(providerId, providers[providerId]);
             providerCfg.options ??= {};
             providerCfg.models ??= {};
+            const providerOptions = providerCfg.options;
             const modelCfg = providerCfg.models[modelKey] ?? { options: {} };
             modelCfg.options ??= {};
             if (!isNone && !isCli) {
@@ -1047,7 +1021,7 @@ const SECTIONS: Section[] = [
             modelLabel.textContent = 'Model ID';
             const modelDesc = document.createElement('span');
             modelDesc.className = 'st-desc';
-            modelDesc.textContent = 'OpenCode-style provider/model, for example anthropic/claude-sonnet-4-5 or openai/gpt-5';
+            modelDesc.textContent = 'OpenCode-style provider/model or local CLI, for example openai/gpt-5.4, zai/glm-5.1, opencode-cli, or codex-cli';
             modelLabel.appendChild(modelDesc);
             modelRow.appendChild(modelLabel);
 
@@ -1076,7 +1050,7 @@ const SECTIONS: Section[] = [
             if (isCli) {
               const note = document.createElement('div');
               note.className = 'st-field st-info-note';
-              note.textContent = 'claude-cli runs the `claude` CLI installed on your system. No API key needed — uses your existing Claude Code login.';
+              note.textContent = `${model} runs the matching local CLI installed on your system. No API key needed when that CLI is already authenticated.`;
               el.appendChild(note);
             }
 
@@ -1096,7 +1070,7 @@ const SECTIONS: Section[] = [
               smallInp.className = 'st-input';
               smallInp.value = wai.small_model ?? '';
               smallInp.setAttribute('list', listId);
-              smallInp.placeholder = 'anthropic/claude-haiku-4-5';
+              smallInp.placeholder = 'openai/gpt-5.4-mini';
               smallInp.addEventListener('change', () => {
                 wai.small_model = smallInp.value.trim() || null;
                 dirty();
@@ -1111,7 +1085,7 @@ const SECTIONS: Section[] = [
               providerLabel.textContent = 'Provider';
               const providerDesc = document.createElement('span');
               providerDesc.className = 'st-desc';
-              providerDesc.textContent = 'provider entry used by this model ID';
+              providerDesc.textContent = 'provider entry used by this model ID; custom ids use OpenAI-compatible routing when Base URL is set';
               providerLabel.appendChild(providerDesc);
               providerRow.appendChild(providerLabel);
               const providerInp = document.createElement('input');
@@ -1152,10 +1126,10 @@ const SECTIONS: Section[] = [
               const keyInp = document.createElement('input');
               keyInp.type = 'text';
               keyInp.className = 'st-input';
-              keyInp.value = String(providerCfg.options.apiKey ?? '');
-              keyInp.placeholder = providerId === 'openai' ? '{env:OPENAI_API_KEY}' : '{env:ANTHROPIC_API_KEY}';
+              keyInp.value = String(providerOptions.apiKey ?? '');
+              keyInp.placeholder = defaultApiKeyPlaceholder(providerId);
               keyInp.addEventListener('input', () => {
-                providerCfg.options.apiKey = keyInp.value.trim();
+                providerOptions.apiKey = keyInp.value.trim();
                 dirty();
               });
               keyRow.appendChild(keyInp);
@@ -1168,17 +1142,17 @@ const SECTIONS: Section[] = [
               urlLabel.textContent = 'Base URL';
               const urlDesc = document.createElement('span');
               urlDesc.className = 'st-desc';
-              urlDesc.textContent = 'OpenAI-compatible providers can use their own endpoint';
+              urlDesc.textContent = 'OpenAI-compatible providers may include /v1; FluXTTY will route chat completions correctly';
               urlLabel.appendChild(urlDesc);
               urlRow.appendChild(urlLabel);
               const urlInp = document.createElement('input');
               urlInp.type = 'text';
               urlInp.className = 'st-input';
-              urlInp.value = String(providerCfg.options.baseURL ?? '');
-              urlInp.placeholder = providerId === 'ollama' ? 'http://localhost:11434' : 'https://api.openai.com';
+              urlInp.value = String(providerOptions.baseURL ?? '');
+              urlInp.placeholder = defaultBaseUrlPlaceholder(providerId);
               urlInp.addEventListener('input', () => {
-                if (urlInp.value.trim()) providerCfg.options.baseURL = urlInp.value.trim();
-                else delete providerCfg.options.baseURL;
+                if (urlInp.value.trim()) providerOptions.baseURL = urlInp.value.trim();
+                else delete providerOptions.baseURL;
                 dirty();
               });
               urlRow.appendChild(urlInp);

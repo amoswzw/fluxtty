@@ -1,5 +1,5 @@
 import type { InputMode, AgentType } from '../session/types';
-import { AGENT_SLASH_COMMANDS } from '../session/types';
+import { AGENT_LABELS, AGENT_SLASH_COMMANDS } from '../session/types';
 import { modeManager } from './ModeManager';
 import { agentDetector } from './AgentDetector';
 import { PaneSelector } from './PaneSelector';
@@ -125,13 +125,19 @@ export class InputBar {
     this.bindKeys();
 
 
-    // Keep insert-mode prompt fresh whenever the active pane changes or its state changes
+    // Keep mode labels fresh whenever the active pane changes or its state changes.
     sessionManager.onActiveChange(() => {
-      if (modeManager.isInShellMode()) this.refreshInsertPrompt();
+      this.refreshModeContext();
     });
     sessionManager.onChange(() => {
-      if (modeManager.isInShellMode()) this.refreshInsertPrompt();
+      this.refreshModeContext();
     });
+  }
+
+  private refreshModeContext() {
+    const mode = modeManager.getMode();
+    if (mode.type === 'insert') this.refreshInsertPrompt();
+    else if (mode.type === 'terminal') this.updateMode(mode);
   }
 
   private buildDOM() {
@@ -733,6 +739,16 @@ export class InputBar {
     return live !== 'none' ? live : pane.agent_type;
   }
 
+  private paneContextLabel(paneId?: number | null): { label: string; kind: 'agent' | 'tui' | 'none' } {
+    const pane = paneId == null ? sessionManager.getActivePane() : sessionManager.getPane(paneId);
+    if (!pane) return { label: '', kind: 'none' };
+    const live = agentDetector.getAgent(pane.id);
+    const agent = live !== 'none' ? live : pane.agent_type;
+    if (agent !== 'none') return { label: AGENT_LABELS[agent] || agent, kind: 'agent' };
+    if (pane.alternate_screen) return { label: 'TUI', kind: 'tui' };
+    return { label: '', kind: 'none' };
+  }
+
   // ── Agent slash completions ───────────────────────────────────────
 
   private showAgentSlashCompletions(agentType: AgentType, val: string, syncToPty = false) {
@@ -836,20 +852,24 @@ export class InputBar {
     const pane = sessionManager.getActivePane();
     const name = pane?.name ?? 'shell';
     const busy = pane?.status === 'running';
-    const agent = pane ? agentDetector.getAgent(pane.id) : 'none';
+    const context = this.paneContextLabel(pane?.id);
 
     this.promptEl.textContent = `${name}${busy ? ' ●' : ''} ❯`;
     this.promptEl.title = busy ? `${name} — running` : name;
 
     let modeText = 'INSERT';
-    if (agent !== 'none') modeText += ` · ${agent}`;
+    if (context.kind !== 'none') modeText += ` · ${context.label}`;
     this.modeIndicatorEl.textContent = modeText;
-    this.modeIndicatorEl.className = agent !== 'none'
+    this.modeIndicatorEl.className = context.kind === 'agent'
       ? 'mode-indicator mode-insert mode-insert-agent'
-      : 'mode-indicator mode-insert';
+      : context.kind === 'tui'
+        ? 'mode-indicator mode-insert mode-insert-tui'
+        : 'mode-indicator mode-insert';
 
-    this.inputEl.placeholder = agent !== 'none'
-      ? `send to ${agent}… (/ slash cmds, Tab complete, Esc normal)`
+    this.inputEl.placeholder = context.kind === 'agent'
+      ? `send to ${context.label}… (/ slash cmds, Tab complete, Esc normal)`
+      : context.kind === 'tui'
+        ? 'TUI active… Ctrl+\\ for raw terminal keys, Esc normal'
       : busy
         ? 'running… (Ctrl+C interrupt, Esc normal)'
         : 'shell input… (Tab complete, Esc normal)';
@@ -919,9 +939,16 @@ export class InputBar {
       }
       case 'terminal': {
         const pane = sessionManager.getPane(mode.paneId);
+        const context = this.paneContextLabel(mode.paneId);
         this.promptEl.textContent = `[${pane?.name ?? '?'}]`;
-        this.modeIndicatorEl.textContent = 'TERMINAL';
-        this.modeIndicatorEl.className = 'mode-indicator mode-terminal';
+        this.modeIndicatorEl.textContent = context.kind !== 'none'
+          ? `TERMINAL · ${context.label}`
+          : 'TERMINAL';
+        this.modeIndicatorEl.className = context.kind === 'agent'
+          ? 'mode-indicator mode-terminal mode-terminal-agent'
+          : context.kind === 'tui'
+            ? 'mode-indicator mode-terminal mode-terminal-tui'
+            : 'mode-indicator mode-terminal';
         this.inputEl.placeholder = 'Ctrl+\\ to return to normal';
         this.inputEl.readOnly = true;
         break;

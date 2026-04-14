@@ -50,7 +50,7 @@ export interface AppConfig {
   keybindings: Array<{ key: string; mods: string | null; action: string }>;
   input: { live_typing: boolean; workspace_scroll_modifier: string };
   workspace_ai: {
-    /** OpenCode-style provider/model id: anthropic/claude-sonnet-4-5, openai/gpt-4o, ollama/llama3 */
+    /** OpenCode-style provider/model id or CLI id: openai/gpt-5.4, zai/glm-5.1, ollama/qwen3-coder:latest, codex-cli */
     model: string;
     small_model?: string | null;
     /** OpenCode-style provider map keyed by provider id. */

@@ -132,7 +132,7 @@ pub struct WorkspaceAiConfig {
     pub always_confirm_broadcast: bool,
     pub always_confirm_multi_step: bool,
     pub agent_relay_auto_submit: bool,
-    /// OpenCode-style provider/model id, e.g. anthropic/claude-sonnet-4-5.
+    /// OpenCode-style provider/model id or CLI id, e.g. openai/gpt-5.4, zai/glm-5.1, codex-cli.
     pub model: String,
     /// Optional lighter-weight model for future summary/title tasks.
     #[serde(skip_serializing_if = "Option::is_none")]

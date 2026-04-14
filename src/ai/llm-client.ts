@@ -1,5 +1,6 @@
 import { transport } from '../transport';
 import type { AiProviderConfig, AppConfig } from '../config/ConfigContext';
+import { isCliModel, withBuiltinProviderDefaults } from './model-catalog';
 
 export interface LLMMessage {
   role: 'system' | 'user' | 'assistant';
@@ -16,12 +17,17 @@ interface ResolvedModelConfig {
 }
 
 function inferProvider(model: string): string {
-  if (model === 'claude-cli') return 'claude-cli';
+  if (isCliModel(model)) return model;
   if (model.startsWith('claude-')) return 'anthropic';
   if (model.startsWith('gpt-') || model.startsWith('o1-') || model.startsWith('o3-')
       || model.startsWith('o4-') || model.startsWith('chatgpt-')) return 'openai';
   if (model.startsWith('gemini-')) return 'google';
   if (model.startsWith('ollama/') || model.startsWith('ollama:')) return 'ollama';
+  if (model.startsWith('deepseek-')) return 'deepseek';
+  if (model.startsWith('grok-')) return 'xai';
+  if (model.startsWith('mistral-') || model.startsWith('codestral-')) return 'mistral';
+  if (model.startsWith('kimi-')) return 'moonshot';
+  if (model.startsWith('glm-')) return 'zai';
   return 'openai';
 }
 
@@ -58,22 +64,22 @@ function stringOption(options: Record<string, unknown>, keys: string[]): string 
   return undefined;
 }
 
-function resolveModelConfig(cfg: AppConfig): ResolvedModelConfig | null {
+export function resolveModelConfig(cfg: AppConfig): ResolvedModelConfig | null {
   const wai = cfg.workspace_ai;
   const model = wai.model?.trim();
   if (!model || model === 'none') return null;
 
   const providers = providerMap(wai.provider);
   const { providerId, modelKey } = splitModel(model, providers);
-  if (providerId === 'claude-cli' || model === 'claude-cli') {
+  if (isCliModel(providerId) || isCliModel(model)) {
     return {
-      providerId: 'claude-cli',
-      modelId: 'claude-cli',
+      providerId: isCliModel(providerId) ? providerId : model,
+      modelId: model,
       options: {},
     };
   }
 
-  const providerCfg = providers[providerId] ?? {};
+  const providerCfg = withBuiltinProviderDefaults(providerId, providers[providerId]);
   const providerOptions = providerCfg.options ?? {};
   const modelCfg = providerCfg.models?.[modelKey];
   const modelOptions = modelCfg?.options ?? {};
@@ -101,15 +107,15 @@ export class LLMClient {
     const resolved = resolveModelConfig(cfg);
     if (!resolved) return '';
 
-    if (resolved.providerId === 'claude-cli') {
-      // claude-cli uses a subprocess, handled by its own IPC command
+    if (isCliModel(resolved.providerId)) {
+      // CLI-backed models use local authenticated tools instead of HTTP APIs.
       const systemParts = messages.filter(m => m.role === 'system').map(m => m.content);
       const lastUser = [...messages].reverse().find(m => m.role === 'user');
       if (!lastUser) return '';
       const prompt = systemParts.length > 0
         ? systemParts.join('\n\n') + '\n\n' + lastUser.content
         : lastUser.content;
-      return transport.send<string>('claude_cli_query', { prompt });
+      return transport.send<string>('ai_cli_query', { cli: resolved.providerId, prompt });
     }
 
     // All other providers: delegate to Rust for native HTTP (no CORS, no fetch restrictions)

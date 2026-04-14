@@ -934,7 +934,7 @@ dependencies = [
 
 [[package]]
 name = "fluxtty"
-version = "0.1.9"
+version = "0.1.8"
 dependencies = [
  "crossbeam-channel",
  "dirs",
