@@ -1,6 +1,7 @@
 import { planExecutor } from '../ai/plan-executor';
 import { getPaneContext } from './WorkspaceState';
 import { waitForCommandComplete } from './waitForCommand';
+import { waitForAgentTurn } from './waitForAgentTurn';
 import type { PaneInfo, AgentType, SessionStatus } from '../session/types';
 
 /** A single action within a pipeline step. */
@@ -45,7 +46,8 @@ export type WorkspaceAction =
   | { type: 'kill'; target: string }
   | { type: 'write'; target: string; data: string }
   | { type: 'paste'; target: string; data: string }
-  | { type: 'set-agent'; target: string; agentType: AgentType };
+  | { type: 'set-agent'; target: string; agentType: AgentType }
+  | { type: 'agent-send'; target: string; message: string; timeout_ms?: number };
 
 export type WorkspaceActionSource = 'keyboard' | 'ui' | 'ai' | 'system';
 
@@ -119,7 +121,7 @@ interface DispatchOptions {
   source?: WorkspaceActionSource;
 }
 
-const CONFIRMABLE_TYPES = new Set<WorkspaceAction['type']>(['broadcast', 'run-group', 'close-group', 'sequential']);
+const CONFIRMABLE_TYPES = new Set<WorkspaceAction['type']>(['broadcast', 'run-group', 'close-group', 'sequential', 'pipeline']);
 const ACTION_LOG_LIMIT = 200;
 
 class WorkspaceActions {
@@ -185,6 +187,12 @@ class WorkspaceActions {
         return `write to "${action.target}"`;
       case 'set-agent':
         return `set "${action.target}" agent to ${action.agentType}`;
+      case 'agent-send': {
+        const preview = action.message.length > 60
+          ? action.message.slice(0, 60) + '…'
+          : action.message;
+        return `send to agent in "${action.target}": ${preview}`;
+      }
     }
   }
 
@@ -194,11 +202,25 @@ class WorkspaceActions {
 
   async dispatch(action: WorkspaceAction, options: DispatchOptions = {}): Promise<WorkspaceActionResult> {
     const source = options.source ?? 'ui';
+    return this.recordAction(source, action, () => (
+      this.isConfirmable(action)
+        ? this.queueConfirmable(action, source)
+        : this.execute(action, source)
+    ));
+  }
+
+  private async dispatchConfirmed(action: WorkspaceAction, source: WorkspaceActionSource): Promise<WorkspaceActionResult> {
+    return this.recordAction(source, action, () => this.execute(action, source));
+  }
+
+  private async recordAction(
+    source: WorkspaceActionSource,
+    action: WorkspaceAction,
+    run: () => Promise<WorkspaceActionResult>,
+  ): Promise<WorkspaceActionResult> {
     const entry = this.createLogEntry(source, action);
     try {
-      const result = this.isConfirmable(action)
-        ? await this.queueConfirmable(action, source)
-        : await this.execute(action, source);
+      const result = await run();
       entry.result = result;
       this.finishLogEntry(entry);
       return result;
@@ -227,7 +249,7 @@ class WorkspaceActions {
       title,
       preview,
       actions,
-      execute: async () => this.dispatchMany(actions, source),
+      execute: async () => this.dispatchManyConfirmed(actions, source),
     });
     return planExecutor.getPlanPreview();
   }
@@ -245,7 +267,7 @@ class WorkspaceActions {
   }
 
   private async queueConfirmable(action: WorkspaceAction, source: WorkspaceActionSource): Promise<WorkspaceActionResult> {
-    const actions = this.expandConfirmableAction(action);
+    const actions = action.type === 'pipeline' ? [action] : this.expandConfirmableAction(action);
     if (actions.length === 0) {
       return { ok: false, message: `No sessions matched ${this.actionDescription(action)}.`, action };
     }
@@ -274,17 +296,17 @@ class WorkspaceActions {
       case 'sequential': {
         const pane = this.findPane(action.target);
         if (!pane) return [];
-        return action.cmds.map(cmd => ({ type: 'run', target: String(pane.id), cmd }));
+        return action.cmds.map(cmd => ({ type: 'run-await', target: String(pane.id), cmd }));
       }
       default:
         return [];
     }
   }
 
-  private async dispatchMany(actions: WorkspaceAction[], source: WorkspaceActionSource): Promise<WorkspaceActionResult[]> {
+  private async dispatchManyConfirmed(actions: WorkspaceAction[], source: WorkspaceActionSource): Promise<WorkspaceActionResult[]> {
     const results: WorkspaceActionResult[] = [];
     for (const action of actions) {
-      results.push(await this.dispatch(action, { source }));
+      results.push(await this.dispatchConfirmed(action, source));
       await delay(300);
     }
     return results;
@@ -305,10 +327,16 @@ class WorkspaceActions {
       case 'run-await': {
         const pane = this.findPane(action.target);
         if (!pane) return this.fail(action, `Session "${action.target}" not found.`);
-        await ports.terminal.write(pane.id, `${action.cmd}\r`);
+        const commandDone = waitForCommandComplete(pane.id, action.timeout_ms ?? 60_000);
+        try {
+          await ports.terminal.write(pane.id, `${action.cmd}\r`);
+        } catch (err) {
+          commandDone.catch(() => {});
+          return this.fail(action, err instanceof Error ? err.message : String(err));
+        }
         ports.viewport.scrollToPane(pane.id);
         try {
-          const result = await waitForCommandComplete(pane.id, action.timeout_ms ?? 60_000);
+          const result = await commandDone;
           const ok = result.exitCode === 0;
           return {
             ok,
@@ -454,11 +482,58 @@ class WorkspaceActions {
         return this.ok(action, `Set ${pane.name} agent to "${action.agentType}".`);
       }
 
+      case 'agent-send': {
+        const pane = this.findPane(action.target);
+        if (!pane) return this.fail(action, `Session "${action.target}" not found.`);
+        if (pane.agent_type === 'none') {
+          return this.fail(action, `No agent running in "${pane.name}". Use "run" for shell commands or mark the pane with !agent.`);
+        }
+
+        // Start listening before writing so we don't miss the first bytes of output.
+        const turnDone = waitForAgentTurn(pane.id, pane.agent_type, action.timeout_ms ?? 120_000);
+        try {
+          await ports.terminal.write(pane.id, `${action.message}\r`);
+        } catch (err) {
+          turnDone.catch(() => {});
+          return this.fail(action, err instanceof Error ? err.message : String(err));
+        }
+        ports.viewport.scrollToPane(pane.id);
+
+        let turnOutput = '';
+        try {
+          turnOutput = await turnDone;
+        } catch (err) {
+          return this.fail(action, err instanceof Error ? err.message : 'Agent timeout');
+        }
+
+        const lines = turnOutput
+          .split('\n')
+          .map(line => line.trimEnd())
+          .filter(line => line.trim() && line.trim() !== action.message.trim());
+
+        const fallbackCtx = lines.length === 0 ? await getPaneContext(pane.id) : null;
+        const outputLines = lines.length > 0 ? lines : fallbackCtx?.recent_output ?? [];
+        const relevant = outputLines.slice(-30);
+        const response = relevant.join('\n');
+        const truncNote = outputLines.length > 30 ? `\n… (${outputLines.length - 30} earlier lines omitted — use "read" for full output)` : '';
+        return this.ok(action, response + truncNote);
+      }
+
       case 'broadcast':
       case 'run-group':
       case 'close-group':
-      case 'sequential':
-        return this.queueConfirmable(action, _source);
+      case 'sequential': {
+        const actions = this.expandConfirmableAction(action);
+        if (actions.length === 0) {
+          return this.fail(action, `No sessions matched ${this.actionDescription(action)}.`);
+        }
+        const results = await this.dispatchManyConfirmed(actions, _source);
+        const ok = results.every(result => result.ok);
+        const message = results.map(result => result.message).join('\n');
+        return ok
+          ? this.ok(action, message)
+          : this.fail(action, message || `Failed to execute ${this.actionDescription(action)}.`);
+      }
     }
   }
 

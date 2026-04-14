@@ -100,6 +100,7 @@ pub fn run() {
             config_save,
             shell_complete,
             get_env_var,
+            ai_cli_query,
             claude_cli_query,
             llm_complete,
             workspace_snapshot_save,

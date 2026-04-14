@@ -17,6 +17,14 @@ pub enum AgentType {
     Claude,
     Codex,
     Aider,
+    Gemini,
+    Opencode,
+    Goose,
+    Cursor,
+    Qwen,
+    Amp,
+    Crush,
+    Openhands,
     Unknown,
 }
 

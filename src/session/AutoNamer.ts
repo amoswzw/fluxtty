@@ -5,11 +5,26 @@ type NameRule = [RegExp, string | ((m: RegExpMatchArray) => string)];
 // the pane keeps its cwd-derived name.
 const SIGNIFICANT: RegExp[] = [
   /^claude\b/,
+  /^@anthropic-ai\/claude-code\b/,
   /^aider\b/,
   /^codex\b/,
+  /^@openai\/codex\b/,
+  /^gemini(?:-cli)?\b/,
+  /^@google\/gemini-cli\b/,
+  /^opencode\b/,
+  /^goose\b/,
+  /^cursor-agent\b/,
+  /^cursor\s+(agent|chat)\b/,
+  /^qwen(?:-code)?\b/,
+  /^amp\b/,
+  /^crush\b/,
+  /^openhands\b/,
   /^n?vim?\b/,
+  /^hx\b/,
   /^emacs\b/,
   /^nano\b/,
+  /^micro\b/,
+  /^kak\b/,
   /^ssh\b/,
   /^mosh\b/,
   /^psql\b/,
@@ -25,26 +40,78 @@ const SIGNIFICANT: RegExp[] = [
   /^htop\b/,
   /^btop\b/,
   /^top\b/,
+  /^glances\b/,
+  /^nvtop\b/,
+  /^nvitop\b/,
+  /^iftop\b/,
+  /^iotop\b/,
+  /^ncdu\b/,
+  /^lazygit\b/,
+  /^gitui\b/,
+  /^tig\b/,
+  /^yazi\b/,
+  /^ranger\b/,
+  /^lf\b/,
+  /^mc\b/,
+  /^fzf\b/,
+  /^tmux\b/,
+  /^zellij\b/,
+  /^screen\b/,
+  /^lazydocker\b/,
   /^k9s\b/,
 ];
 
+function unwrapCommand(cmd: string): string {
+  let current = cmd.trim();
+  for (let i = 0; i < 4; i++) {
+    const before = current;
+    current = current
+      .replace(/^(?:sudo|command|exec|time|nohup)\s+/, '')
+      .replace(/^env\s+(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*(.*)$/, '$1')
+      .replace(/^(?:npx|bunx|uvx)\s+(?:-y\s+)?/, '')
+      .replace(/^pnpm\s+dlx\s+/, '')
+      .replace(/^yarn\s+dlx\s+/, '');
+    if (current === before) break;
+  }
+  return current;
+}
+
 /** Returns true if the command should trigger a pane rename. */
 export function isSignificantCommand(cmd: string): boolean {
-  const trimmed = cmd.trim();
+  const trimmed = unwrapCommand(cmd);
   return SIGNIFICANT.some(re => re.test(trimmed));
 }
 
 const RULES: NameRule[] = [
   // AI agents (highest priority)
   [/^claude\b/,                       'claude'],
+  [/^@anthropic-ai\/claude-code\b/,    'claude'],
   [/^aider\b/,                        'aider'],
   [/^codex\b/,                        'codex'],
+  [/^@openai\/codex\b/,               'codex'],
+  [/^gemini(?:-cli)?\b/,              'gemini'],
+  [/^@google\/gemini-cli\b/,          'gemini'],
+  [/^opencode\b|^opencode-ai\b/,      'opencode'],
+  [/^goose\b/,                        'goose'],
+  [/^cursor-agent\b|^cursor\s+(agent|chat)\b/, 'cursor'],
+  [/^qwen(?:-code)?\b/,               'qwen'],
+  [/^amp\b/,                          'amp'],
+  [/^crush\b/,                        'crush'],
+  [/^openhands\b/,                    'openhands'],
 
   // Editors
   [/^n?vim?\s+(.+)/,                  m => `vim: ${basename(m[1])}`],
+  [/^hx\s+(.+)/,                      m => `hx: ${basename(m[1])}`],
   [/^emacs\s+(.+)/,                   m => `emacs: ${basename(m[1])}`],
   [/^nano\s+(.+)/,                    m => `nano: ${basename(m[1])}`],
+  [/^micro\s+(.+)/,                   m => `micro: ${basename(m[1])}`],
+  [/^kak\s+(.+)/,                     m => `kak: ${basename(m[1])}`],
   [/^n?vim?\s*$/,                     'vim'],
+  [/^hx\s*$/,                         'hx'],
+  [/^emacs\s*$/,                      'emacs'],
+  [/^nano\s*$/,                       'nano'],
+  [/^micro\s*$/,                      'micro'],
+  [/^kak\s*$/,                        'kak'],
 
   // Git
   [/^git\s+(commit|push|pull|rebase|merge|clone|log|diff|stash)\b/, m => `git ${m[1]}`],
@@ -109,6 +176,7 @@ const RULES: NameRule[] = [
   [/^docker\s+(run|exec|build|logs)\b/, m => `docker ${m[1]}`],
   [/^kubectl\s+(\S+)/,               m => `kubectl ${m[1]}`],
   [/^k9s\b/,                          'k9s'],
+  [/^lazydocker\b/,                   'lazydocker'],
 
   // Build tools
   [/^make\s+(\S+)/,                   m => `make ${m[1]}`],
@@ -131,6 +199,22 @@ const RULES: NameRule[] = [
   [/^cat\s+(\S+)/,                    m => `cat: ${basename(m[1])}`],
   [/^htop\b|^top\b/,                  'htop'],
   [/^btop\b/,                         'btop'],
+  [/^glances\b/,                      'glances'],
+  [/^nvtop\b|^nvitop\b/,              'nvtop'],
+  [/^iftop\b/,                        'iftop'],
+  [/^iotop\b/,                        'iotop'],
+  [/^ncdu\b/,                         'ncdu'],
+  [/^lazygit\b/,                      'lazygit'],
+  [/^gitui\b/,                        'gitui'],
+  [/^tig\b/,                          'tig'],
+  [/^yazi\b/,                         'yazi'],
+  [/^ranger\b/,                       'ranger'],
+  [/^lf\b/,                           'lf'],
+  [/^mc\b/,                           'mc'],
+  [/^fzf\b/,                          'fzf'],
+  [/^tmux\b/,                         'tmux'],
+  [/^zellij\b/,                       'zellij'],
+  [/^screen\b/,                       'screen'],
 
   // Directory navigation — rename to dir name
   [/^cd\s+(.+)/,                      m => {
@@ -144,7 +228,7 @@ function basename(p: string): string {
 }
 
 function suggest(cmd: string): string | null {
-  const trimmed = cmd.trim();
+  const trimmed = unwrapCommand(cmd);
   if (!trimmed) return null;
 
   for (const [pattern, result] of RULES) {
@@ -198,8 +282,13 @@ export function isDefaultName(name: string): boolean {
   return /^shell-\d+$/.test(name);
 }
 
-/** Returns a name derived purely from cwd (used on pane creation / cwd change). */
+/** Returns a name derived purely from cwd (used on pane creation / cwd change).
+ * Uses parent/child format for paths deeper than the home dir's immediate children,
+ * so ~/workspace and ~/workspace/working produce distinct names. */
 export function nameFromCwd(cwd: string): string | null {
-  const dir = basename(cwd.replace(/\/$/, ''));
-  return dir || null;
+  const parts = cwd.replace(/\/$/, '').split('/').filter(Boolean);
+  if (parts.length === 0) return null;
+  if (parts.length <= 3) return parts[parts.length - 1]; // at or above ~/subdir depth
+  // depth > 3 (e.g. /Users/amos/workspace/working): use parent/child
+  return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
 }

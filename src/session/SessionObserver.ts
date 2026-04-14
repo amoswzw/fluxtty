@@ -2,6 +2,7 @@ import { agentDetector } from '../input/AgentDetector';
 import { sessionManager } from './SessionManager';
 import { suggestCommandNameForPane, suggestCwdNameForPane } from './PaneNamingPolicy';
 import type { PaneInfo } from './types';
+import { transport } from '../transport';
 
 class SessionObserver {
   private initialized = false;
@@ -17,11 +18,19 @@ class SessionObserver {
 
     document.addEventListener('insert-command-submitted', (event: Event) => {
       const { text, paneId } = (event as CustomEvent<{ text: string; paneId: number }>).detail;
+      agentDetector.addCommand(paneId, text);
+
       const pane = sessionManager.getPane(paneId);
       if (!pane) return;
       const nextName = suggestCommandNameForPane(pane, text);
       if (nextName) {
         void sessionManager.renamePane(paneId, nextName, 'auto');
+      }
+    });
+
+    void transport.listen<{ pane_id: number }>('pane:command_complete', ({ pane_id }) => {
+      if (agentDetector.getAgent(pane_id) !== 'none') {
+        agentDetector.setManual(pane_id, 'none');
       }
     });
   }

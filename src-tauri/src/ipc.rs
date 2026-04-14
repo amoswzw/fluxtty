@@ -52,7 +52,9 @@ pub async fn pty_spawn(
     let (shell, shell_args, group, cwd) = {
         let cfg = config.lock().unwrap();
         // session_defaults.shell overrides cfg.shell.program if set
-        let shell = cfg.session_defaults.shell
+        let shell = cfg
+            .session_defaults
+            .shell
             .clone()
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| cfg.shell.program.clone());
@@ -73,7 +75,9 @@ pub async fn pty_spawn(
         if args.new_row {
             // Use the exact insertion point the frontend computed. Falls back
             // to append if not provided.
-            let target = args.target_row.unwrap_or_else(|| session.layout().rows.len());
+            let target = args
+                .target_row
+                .unwrap_or_else(|| session.layout().rows.len());
             session.prepare_new_row_at(target)
         } else if let Some(target) = args.target_row {
             // Caller explicitly specified which row to add to
@@ -91,7 +95,16 @@ pub async fn pty_spawn(
 
     let pid = {
         let mut pty = pty_mgr.lock().unwrap();
-        pty.spawn(args.pane_id, &shell, &shell_args, &cwd, args.cols, args.rows, app.clone(), session_mgr.inner().clone())?
+        pty.spawn(
+            args.pane_id,
+            &shell,
+            &shell_args,
+            &cwd,
+            args.cols,
+            args.rows,
+            app.clone(),
+            session_mgr.inner().clone(),
+        )?
     };
 
     {
@@ -210,6 +223,14 @@ pub async fn session_set_agent(
         "claude" => AgentType::Claude,
         "codex" => AgentType::Codex,
         "aider" => AgentType::Aider,
+        "gemini" => AgentType::Gemini,
+        "opencode" => AgentType::Opencode,
+        "goose" => AgentType::Goose,
+        "cursor" => AgentType::Cursor,
+        "qwen" => AgentType::Qwen,
+        "amp" => AgentType::Amp,
+        "crush" => AgentType::Crush,
+        "openhands" => AgentType::Openhands,
         "unknown" => AgentType::Unknown,
         _ => AgentType::None,
     };
@@ -278,10 +299,7 @@ pub async fn config_save(
 }
 
 #[tauri::command]
-pub async fn config_reload(
-    app: AppHandle,
-    config: State<'_, SharedConfig>,
-) -> Result<(), String> {
+pub async fn config_reload(app: AppHandle, config: State<'_, SharedConfig>) -> Result<(), String> {
     let new_cfg = load_config();
     {
         let mut cfg = config.lock().unwrap();
@@ -403,7 +421,11 @@ pub async fn shell_complete(args: ShellCompleteArgs) -> Result<Vec<String>, Stri
             dirs::home_dir().unwrap_or_default().join(rest)
         } else {
             let pb = std::path::PathBuf::from(p);
-            if pb.exists() { pb } else { dirs::home_dir().unwrap_or_default() }
+            if pb.exists() {
+                pb
+            } else {
+                dirs::home_dir().unwrap_or_default()
+            }
         }
     };
 
@@ -433,7 +455,23 @@ pub async fn get_env_var(name: String) -> Result<String, String> {
 /// Requires the `claude` CLI to be installed and authenticated.
 #[tauri::command]
 pub async fn claude_cli_query(prompt: String) -> Result<String, String> {
+    ai_cli_query("claude-cli".to_string(), prompt).await
+}
+
+/// Run a local AI CLI as a subprocess and return the response text.
+/// Requires the selected CLI to be installed and authenticated.
+#[tauri::command]
+pub async fn ai_cli_query(cli: String, prompt: String) -> Result<String, String> {
     use tokio::process::Command;
+
+    let (binary, shell_command) = match cli.as_str() {
+        "claude-cli" => ("claude", "claude -p \"$FLUXTTY_PROMPT\""),
+        "codex-cli" => ("codex", "codex exec \"$FLUXTTY_PROMPT\""),
+        "opencode-cli" => ("opencode", "opencode run \"$FLUXTTY_PROMPT\""),
+        "gemini-cli" => ("gemini", "gemini --prompt \"$FLUXTTY_PROMPT\""),
+        "qwen-cli" => ("qwen", "qwen --prompt \"$FLUXTTY_PROMPT\""),
+        other => return Err(format!("Unsupported AI CLI model: {}", other)),
+    };
 
     // macOS GUI apps don't inherit the shell PATH, so `claude` may not be
     // found with Command::new("claude"). Run via an interactive login shell
@@ -443,25 +481,39 @@ pub async fn claude_cli_query(prompt: String) -> Result<String, String> {
     // The prompt is passed via an env var to avoid shell-injection issues.
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     let output = Command::new(&shell)
-        .args(["-i", "-l", "-c", "claude -p \"$FLUXTTY_PROMPT\""])
+        .args(["-i", "-l", "-c", shell_command])
         .env("FLUXTTY_PROMPT", &prompt)
         .stdin(std::process::Stdio::null())
         .output()
         .await
-        .map_err(|e| format!("Failed to spawn shell: {}. Is `claude` CLI installed?", e))?;
+        .map_err(|e| {
+            format!(
+                "Failed to spawn shell: {}. Is `{}` CLI installed?",
+                e, binary
+            )
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
         let msg = stderr.trim();
         if msg.contains("command not found") {
             return Err(format!(
-                "claude CLI not found in PATH.\n\
-                Run `which claude` in your terminal to find the path, \
+                "{} CLI not found in PATH.\n\
+                Run `which {}` in your terminal to find the path, \
                 then make sure it is accessible from your shell profile \
-                (~/.zprofile or ~/.zshrc)."
+                (~/.zprofile or ~/.zshrc).",
+                binary, binary
             ));
         }
-        return Err(format!("claude CLI error: {}", msg));
+        let detail = if !msg.is_empty() {
+            msg.to_string()
+        } else if !stdout.trim().is_empty() {
+            stdout.trim().to_string()
+        } else {
+            format!("exited with {} without output", output.status)
+        };
+        return Err(format!("{} CLI error: {}", binary, detail));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -489,12 +541,46 @@ pub struct LlmCompleteArgs {
 
 /// Infer provider from model name (mirrors the JS inferProvider logic).
 fn infer_provider(model: &str) -> &'static str {
-    if model == "claude-cli" { return "claude-cli"; }
-    if model.starts_with("claude-") { return "anthropic"; }
-    if model.starts_with("gpt-") || model.starts_with("o1-") || model.starts_with("o3-")
-        || model.starts_with("o4-") || model.starts_with("chatgpt-") { return "openai"; }
-    if model.starts_with("gemini-") { return "google"; }
-    if model.starts_with("ollama/") || model.starts_with("ollama:") { return "ollama"; }
+    match model {
+        "claude-cli" => return "claude-cli",
+        "codex-cli" => return "codex-cli",
+        "opencode-cli" => return "opencode-cli",
+        "gemini-cli" => return "gemini-cli",
+        "qwen-cli" => return "qwen-cli",
+        _ => {}
+    }
+    if model.starts_with("claude-") {
+        return "anthropic";
+    }
+    if model.starts_with("gpt-")
+        || model.starts_with("o1-")
+        || model.starts_with("o3-")
+        || model.starts_with("o4-")
+        || model.starts_with("chatgpt-")
+    {
+        return "openai";
+    }
+    if model.starts_with("gemini-") {
+        return "google";
+    }
+    if model.starts_with("ollama/") || model.starts_with("ollama:") {
+        return "ollama";
+    }
+    if model.starts_with("deepseek-") {
+        return "deepseek";
+    }
+    if model.starts_with("grok-") {
+        return "xai";
+    }
+    if model.starts_with("mistral-") || model.starts_with("codestral-") {
+        return "mistral";
+    }
+    if model.starts_with("kimi-") {
+        return "moonshot";
+    }
+    if model.starts_with("glm-") {
+        return "zai";
+    }
     if let Some(prefix) = model.split_once('/').map(|(p, _)| p) {
         // explicit provider prefix — return as static str via leak (rare path)
         let s: &'static str = Box::leak(prefix.to_string().into_boxed_str());
@@ -509,20 +595,41 @@ fn strip_provider_prefix<'a>(model: &'a str, provider: &str) -> &'a str {
     if let Some(rest) = model.strip_prefix(&explicit_prefix) {
         return rest;
     }
-
-    let prefixes = ["anthropic/", "openai/", "google/", "ollama/", "ollama:"];
-    for p in prefixes {
-        if let Some(rest) = model.strip_prefix(p) { return rest; }
-    }
     model
 }
 
+fn versioned_api_url(base: &str, version: &str, endpoint: &str) -> String {
+    let base = base.trim_end_matches('/');
+    let version = version.trim_matches('/');
+    let endpoint = endpoint.trim_start_matches('/');
+    if base.ends_with(&format!("/{}", version)) {
+        format!("{}/{}", base, endpoint)
+    } else {
+        format!("{}/{}/{}", base, version, endpoint)
+    }
+}
+
+fn append_api_path(base: &str, endpoint: &str) -> String {
+    format!(
+        "{}/{}",
+        base.trim_end_matches('/'),
+        endpoint.trim_start_matches('/'),
+    )
+}
+
 fn resolve_config_string(value: &str) -> Result<String, String> {
-    if let Some(name) = value.strip_prefix("{env:").and_then(|v| v.strip_suffix('}')) {
-        return std::env::var(name).map_err(|_| format!("Environment variable '{}' is not set", name));
+    if let Some(name) = value
+        .strip_prefix("{env:")
+        .and_then(|v| v.strip_suffix('}'))
+    {
+        return std::env::var(name)
+            .map_err(|_| format!("Environment variable '{}' is not set", name));
     }
 
-    if let Some(path) = value.strip_prefix("{file:").and_then(|v| v.strip_suffix('}')) {
+    if let Some(path) = value
+        .strip_prefix("{file:")
+        .and_then(|v| v.strip_suffix('}'))
+    {
         let path = if let Some(rest) = path.strip_prefix("~/") {
             dirs::home_dir().unwrap_or_default().join(rest)
         } else {
@@ -536,11 +643,29 @@ fn resolve_config_string(value: &str) -> Result<String, String> {
     Ok(value.to_string())
 }
 
-fn option_string(options: &std::collections::BTreeMap<String, serde_json::Value>, keys: &[&str]) -> Option<String> {
-    keys.iter().find_map(|key| options.get(*key)?.as_str().map(ToString::to_string))
+fn option_string(
+    options: &std::collections::BTreeMap<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<String> {
+    keys.iter()
+        .find_map(|key| options.get(*key)?.as_str().map(ToString::to_string))
 }
 
-fn option_u64(options: &std::collections::BTreeMap<String, serde_json::Value>, keys: &[&str]) -> Option<u64> {
+fn openai_chat_completions_url(
+    provider: &str,
+    base: &str,
+    options: &std::collections::BTreeMap<String, serde_json::Value>,
+) -> String {
+    option_string(options, &["chatCompletionsPath", "chat_completions_path"])
+        .or_else(|| default_chat_completions_path(provider).map(ToString::to_string))
+        .map(|path| append_api_path(base, &path))
+        .unwrap_or_else(|| versioned_api_url(base, "v1", "chat/completions"))
+}
+
+fn option_u64(
+    options: &std::collections::BTreeMap<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<u64> {
     keys.iter().find_map(|key| options.get(*key)?.as_u64())
 }
 
@@ -554,7 +679,11 @@ fn apply_common_llm_options(
     if let Some(v) = options.get("temperature").and_then(|v| v.as_f64()) {
         body["temperature"] = serde_json::json!(v);
     }
-    if let Some(v) = options.get("topP").or_else(|| options.get("top_p")).and_then(|v| v.as_f64()) {
+    if let Some(v) = options
+        .get("topP")
+        .or_else(|| options.get("top_p"))
+        .and_then(|v| v.as_f64())
+    {
         body["top_p"] = serde_json::json!(v);
     }
     if let Some(v) = option_string(options, &["reasoningEffort", "reasoning_effort"]) {
@@ -564,20 +693,24 @@ fn apply_common_llm_options(
 
 #[tauri::command]
 pub async fn llm_complete(args: LlmCompleteArgs) -> Result<String, String> {
-    let provider = args.provider
+    let provider = args
+        .provider
         .as_deref()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| infer_provider(&args.model))
         .to_string();
 
-    let base_url = args.base_url
+    let base_url = args
+        .base_url
         .clone()
         .or_else(|| option_string(&args.options, &["baseURL", "base_url"]))
         .map(|value| resolve_config_string(&value))
-        .transpose()?;
+        .transpose()?
+        .or_else(|| default_base_url(&provider).map(ToString::to_string));
 
     // Resolve API key from OpenCode-style {env:...}/{file:...}, or legacy env var.
-    let api_key = args.api_key
+    let api_key = args
+        .api_key
         .as_deref()
         .filter(|s| !s.is_empty())
         .map(resolve_config_string)
@@ -599,7 +732,10 @@ pub async fn llm_complete(args: LlmCompleteArgs) -> Result<String, String> {
     let client = reqwest::Client::new();
     let provider_kind = match provider.as_str() {
         "anthropic" | "openai" | "google" | "ollama" => provider.as_str(),
-        "openai-compatible" => "openai",
+        "openai-compatible" | "lmstudio" | "openrouter" | "deepseek" | "xai" | "mistral"
+        | "groq" | "together" | "moonshot" | "zai" | "perplexity" | "fireworks" | "cerebras" => {
+            "openai"
+        }
         _ if base_url.is_some() => "openai",
         _ => provider.as_str(),
     };
@@ -607,7 +743,7 @@ pub async fn llm_complete(args: LlmCompleteArgs) -> Result<String, String> {
     match provider_kind {
         "anthropic" => {
             let base = base_url.as_deref().unwrap_or("https://api.anthropic.com");
-            let url = format!("{}/v1/messages", base.trim_end_matches('/'));
+            let url = versioned_api_url(base, "v1", "messages");
 
             let system: Vec<_> = args.messages.iter()
                 .filter(|m| m.role == "system")
@@ -658,7 +794,7 @@ pub async fn llm_complete(args: LlmCompleteArgs) -> Result<String, String> {
 
         "openai" => {
             let base = base_url.as_deref().unwrap_or("https://api.openai.com");
-            let url = format!("{}/v1/chat/completions", base.trim_end_matches('/'));
+            let url = openai_chat_completions_url(&provider, base, &args.options);
 
             let msgs: Vec<_> = args.messages.iter()
                 .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
@@ -687,10 +823,7 @@ pub async fn llm_complete(args: LlmCompleteArgs) -> Result<String, String> {
 
         "google" => {
             let base = base_url.as_deref().unwrap_or("https://generativelanguage.googleapis.com");
-            let url = format!(
-                "{}/v1beta/models/{}:generateContent",
-                base.trim_end_matches('/'), model
-            );
+            let url = versioned_api_url(base, "v1beta", &format!("models/{}:generateContent", model));
 
             let system: Vec<_> = args.messages.iter()
                 .filter(|m| m.role == "system")
@@ -738,7 +871,7 @@ pub async fn llm_complete(args: LlmCompleteArgs) -> Result<String, String> {
 
         "ollama" => {
             let base = base_url.as_deref().unwrap_or("http://localhost:11434");
-            let url = format!("{}/api/chat", base.trim_end_matches('/'));
+            let url = append_api_path(base, "api/chat");
 
             let ollama_model = model.trim_start_matches("ollama/").trim_start_matches("ollama:");
             let msgs: Vec<_> = args.messages.iter()
@@ -782,7 +915,84 @@ fn default_api_key_env(provider: &str) -> Option<&'static str> {
         "anthropic" => Some("ANTHROPIC_API_KEY"),
         "openai" => Some("OPENAI_API_KEY"),
         "google" => Some("GOOGLE_API_KEY"),
+        "openrouter" => Some("OPENROUTER_API_KEY"),
+        "deepseek" => Some("DEEPSEEK_API_KEY"),
+        "xai" => Some("XAI_API_KEY"),
+        "mistral" => Some("MISTRAL_API_KEY"),
+        "groq" => Some("GROQ_API_KEY"),
+        "together" => Some("TOGETHER_API_KEY"),
+        "moonshot" => Some("MOONSHOT_API_KEY"),
+        "zai" => Some("ZAI_API_KEY"),
+        "perplexity" => Some("PERPLEXITY_API_KEY"),
+        "fireworks" => Some("FIREWORKS_API_KEY"),
+        "cerebras" => Some("CEREBRAS_API_KEY"),
         _ => None,
+    }
+}
+
+fn default_base_url(provider: &str) -> Option<&'static str> {
+    match provider {
+        "ollama" => Some("http://localhost:11434"),
+        "lmstudio" => Some("http://localhost:1234/v1"),
+        "openrouter" => Some("https://openrouter.ai/api/v1"),
+        "deepseek" => Some("https://api.deepseek.com/v1"),
+        "xai" => Some("https://api.x.ai/v1"),
+        "mistral" => Some("https://api.mistral.ai/v1"),
+        "groq" => Some("https://api.groq.com/openai/v1"),
+        "together" => Some("https://api.together.xyz/v1"),
+        "moonshot" => Some("https://api.moonshot.ai/v1"),
+        "zai" => Some("https://api.z.ai/api/coding/paas/v4"),
+        "perplexity" => Some("https://api.perplexity.ai"),
+        "fireworks" => Some("https://api.fireworks.ai/inference/v1"),
+        "cerebras" => Some("https://api.cerebras.ai/v1"),
+        _ => None,
+    }
+}
+
+fn default_chat_completions_path(provider: &str) -> Option<&'static str> {
+    match provider {
+        "zai" | "perplexity" => Some("chat/completions"),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn strips_only_the_selected_fluxtty_provider_prefix() {
+        assert_eq!(strip_provider_prefix("openai/gpt-5.4", "openai"), "gpt-5.4");
+        assert_eq!(
+            strip_provider_prefix("anthropic/claude-sonnet-4.5", "openrouter"),
+            "anthropic/claude-sonnet-4.5",
+        );
+    }
+
+    #[test]
+    fn builds_versioned_urls_without_duplicate_version_segments() {
+        assert_eq!(
+            versioned_api_url("https://api.openai.com", "v1", "chat/completions"),
+            "https://api.openai.com/v1/chat/completions",
+        );
+        assert_eq!(
+            versioned_api_url("https://openrouter.ai/api/v1", "v1", "chat/completions"),
+            "https://openrouter.ai/api/v1/chat/completions",
+        );
+    }
+
+    #[test]
+    fn provider_specific_chat_path_supports_zai_and_perplexity() {
+        let options = BTreeMap::new();
+        assert_eq!(
+            openai_chat_completions_url("zai", "https://api.z.ai/api/coding/paas/v4", &options),
+            "https://api.z.ai/api/coding/paas/v4/chat/completions",
+        );
+        assert_eq!(
+            openai_chat_completions_url("perplexity", "https://api.perplexity.ai", &options),
+            "https://api.perplexity.ai/chat/completions",
+        );
     }
 }
 
@@ -825,7 +1035,10 @@ pub async fn get_pane_context(
         .filter(|line| !line.trim().is_empty())
         .collect();
 
-    Ok(Some(PaneContext { info, recent_output }))
+    Ok(Some(PaneContext {
+        info,
+        recent_output,
+    }))
 }
 
 /// Very small ANSI stripper: removes ESC-based sequences common in terminal output.
@@ -840,7 +1053,9 @@ fn strip_ansi(s: &str) -> String {
                 Some('[') => {
                     chars.next(); // consume '['
                     for c in chars.by_ref() {
-                        if ('\x40'..='\x7e').contains(&c) { break; }
+                        if ('\x40'..='\x7e').contains(&c) {
+                            break;
+                        }
                     }
                 }
                 // OSC sequence: ESC ] ... ST (BEL or ESC \)
@@ -849,13 +1064,18 @@ fn strip_ansi(s: &str) -> String {
                     loop {
                         match chars.next() {
                             None | Some('\x07') => break,
-                            Some('\x1b') => { chars.next(); break; } // ESC \
+                            Some('\x1b') => {
+                                chars.next();
+                                break;
+                            } // ESC \
                             _ => {}
                         }
                     }
                 }
                 // Other two-char sequences: skip next char
-                Some(_) => { chars.next(); }
+                Some(_) => {
+                    chars.next();
+                }
                 None => {}
             }
         } else {
@@ -924,7 +1144,11 @@ pub async fn workspace_snapshot_save(
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, &json).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
-    log::info!("Workspace snapshot saved ({} panes) to {:?}", snapshot.panes.len(), path);
+    log::info!(
+        "Workspace snapshot saved ({} panes) to {:?}",
+        snapshot.panes.len(),
+        path
+    );
     Ok(())
 }
 
@@ -949,7 +1173,11 @@ pub async fn workspace_snapshot_load(
     };
     match serde_json::from_str::<WorkspaceSnapshot>(&content) {
         Ok(snap) => {
-            log::info!("Workspace snapshot loaded ({} panes) from {:?}", snap.panes.len(), path);
+            log::info!(
+                "Workspace snapshot loaded ({} panes) from {:?}",
+                snap.panes.len(),
+                path
+            );
             Ok(Some(snap))
         }
         Err(e) => {
@@ -958,7 +1186,6 @@ pub async fn workspace_snapshot_load(
         }
     }
 }
-
 
 // ── Window chrome ──────────────────────────────────────────────────────────────────────────────
 
@@ -972,22 +1199,24 @@ pub async fn window_set_traffic_lights_hidden(
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        use objc::{msg_send, sel, sel_impl};
         use objc::runtime::Object;
+        use objc::{msg_send, sel, sel_impl};
 
         // Cast to usize so the value is Send and can be moved into the closure.
         let ns_win_ptr = window.ns_window().map_err(|e| e.to_string())? as usize;
 
-        window.run_on_main_thread(move || unsafe {
-            let ns_win = ns_win_ptr as *mut Object;
-            // NSWindowCloseButton = 0, NSWindowMiniaturizeButton = 1, NSWindowZoomButton = 2
-            for kind in [0i64, 1i64, 2i64] {
-                let btn: *mut Object = msg_send![ns_win, standardWindowButton: kind];
-                if !btn.is_null() {
-                    let _: () = msg_send![btn, setHidden: hidden as u8];
+        window
+            .run_on_main_thread(move || unsafe {
+                let ns_win = ns_win_ptr as *mut Object;
+                // NSWindowCloseButton = 0, NSWindowMiniaturizeButton = 1, NSWindowZoomButton = 2
+                for kind in [0i64, 1i64, 2i64] {
+                    let btn: *mut Object = msg_send![ns_win, standardWindowButton: kind];
+                    if !btn.is_null() {
+                        let _: () = msg_send![btn, setHidden: hidden as u8];
+                    }
                 }
-            }
-        }).map_err(|e| e.to_string())?;
+            })
+            .map_err(|e| e.to_string())?;
     }
     #[cfg(not(target_os = "macos"))]
     let _ = (window, hidden);

@@ -32,6 +32,7 @@ vi.mock('../session/SessionManager', () => ({
 vi.mock('../workspace/WorkspaceActions', () => ({
   workspaceActions: {
     dispatch: vi.fn().mockResolvedValue({ ok: true, message: 'done', action: {} }),
+    queueActionBatch: vi.fn().mockResolvedValue('Plan: queued\nConfirm? (y/n)'),
     getLog: vi.fn().mockReturnValue([]),
     configure: vi.fn(),
     findPane: vi.fn(),
@@ -150,5 +151,71 @@ describe('system prompt', () => {
     await aiHandler.handle('call 1');
     await aiHandler.handle('call 2');
     expect(vi.mocked(formatWorkspaceContext).mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ── Action execution ──────────────────────────────────────────────────────────
+
+describe('AIHandler action routing', () => {
+  it('queues workspace-changing model actions for confirmation', async () => {
+    const { workspaceActions } = await import('../workspace/WorkspaceActions');
+    mockComplete.mockResolvedValue([
+      'I will run it.',
+      '```action',
+      '{"type":"run","target":"frontend","cmd":"npm test"}',
+      '```',
+    ].join('\n'));
+
+    const result = await aiHandler.handle('run tests');
+
+    expect(result).toContain('Plan: queued');
+    expect(vi.mocked(workspaceActions.queueActionBatch)).toHaveBeenCalledWith(
+      expect.stringContaining('action desc'),
+      [{ type: 'run', target: 'frontend', cmd: 'npm test' }],
+      { source: 'ai' },
+    );
+    expect(vi.mocked(workspaceActions.dispatch)).not.toHaveBeenCalled();
+  });
+
+  it('executes read actions immediately', async () => {
+    const { workspaceActions } = await import('../workspace/WorkspaceActions');
+    mockComplete.mockResolvedValue([
+      '```action',
+      '{"type":"read","target":"frontend"}',
+      '```',
+    ].join('\n'));
+
+    const result = await aiHandler.handle('read frontend');
+
+    expect(result).toContain('done');
+    expect(vi.mocked(workspaceActions.dispatch)).toHaveBeenCalledWith(
+      { type: 'read', target: 'frontend' },
+      { source: 'ai' },
+    );
+    expect(vi.mocked(workspaceActions.queueActionBatch)).not.toHaveBeenCalled();
+  });
+
+  it('accepts an array of actions in one action block', async () => {
+    const { workspaceActions } = await import('../workspace/WorkspaceActions');
+    mockComplete.mockResolvedValue([
+      '```action',
+      '[',
+      '  {"type":"new","name":"server"},',
+      '  {"type":"focus","target":"server"}',
+      ']',
+      '```',
+    ].join('\n'));
+
+    await aiHandler.handle('set up server');
+
+    expect(vi.mocked(workspaceActions.dispatch)).toHaveBeenCalledWith(
+      { type: 'focus', target: 'server' },
+      { source: 'ai' },
+    );
+    expect(vi.mocked(workspaceActions.queueActionBatch)).toHaveBeenCalledWith(
+      expect.stringContaining('action desc'),
+      [{ type: 'new', name: 'server' }],
+      { source: 'ai' },
+    );
   });
 });
