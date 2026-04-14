@@ -62,7 +62,7 @@ export interface AppConfig {
     always_confirm_multi_step: boolean;
     agent_relay_auto_submit?: boolean;
   };
-  waterfall: { row_height_mode: string; fixed_row_height: number; scroll_snap: boolean; new_pane_focus: boolean; note_width: number; pane_min_width: number; show_note_button: boolean; inactive_pane_scrim_strength: number };
+  waterfall: { row_height_mode: string; fixed_row_height: number; scroll_snap: boolean; new_pane_focus: boolean; note_width: number; pane_min_width: number; show_note_button: boolean; inactive_pane_scrim_strength: number; min_row_lines: number };
   persistence: { restore_workspace_on_launch: boolean; scrollback_lines: number; save_scrollback_on_exit: boolean };
 }
 
