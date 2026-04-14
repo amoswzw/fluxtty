@@ -209,6 +209,7 @@ pub struct WaterfallConfig {
     pub pane_min_width: u32,
     pub show_note_button: bool,
     pub inactive_pane_scrim_strength: u32,
+    pub min_row_lines: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -427,6 +428,7 @@ impl Default for WaterfallConfig {
             pane_min_width: 150,
             show_note_button: true,
             inactive_pane_scrim_strength: 22,
+            min_row_lines: 30,
         }
     }
 }

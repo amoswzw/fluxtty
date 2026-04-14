@@ -191,10 +191,10 @@ export class WaterfallArea {
       // Phase 1: rows fit on screen, divide height evenly.
       // Phase 2: rows stop shrinking once they hit the minimum useful height;
       // the workspace remains scrollable in a classic waterfall layout.
-      const MIN_LINES = 18;
+      const minLines = cfg.waterfall.min_row_lines ?? 30;
       const paneChromeH = PANE_HEADER_HEIGHT + ROW_BORDER_Y + TERM_PADDING_Y;
       const lineH = cfg.font.size * 1.2;
-      const threshold = paneChromeH + Math.ceil(MIN_LINES * lineH);
+      const threshold = paneChromeH + Math.ceil(minLines * lineH);
       const overhead = cfg.window.padding.y * 2 + (rowCount > 1 ? rowGap * (rowCount - 1) : 0);
       const idealOuterHeight = rowCount > 0 ? Math.floor((containerH - overhead) / rowCount) : containerH;
       rowHeight = idealOuterHeight >= threshold ? idealOuterHeight : threshold;
