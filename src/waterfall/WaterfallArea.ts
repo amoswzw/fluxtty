@@ -1,9 +1,8 @@
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../transport';
 import { TerminalPane } from './TerminalPane';
 import { sessionManager } from '../session/SessionManager';
 import { modeManager } from '../input/ModeManager';
 import { configContext } from '../config/ConfigContext';
-import { nameFromCwd, isDefaultName, markAutoNamed, isAutoNamed } from '../session/AutoNamer';
 import { hintManager } from '../hints/HintManager';
 
 const DEFAULT_WATERFALL_ROW_GAP = 5;
@@ -24,7 +23,6 @@ export class WaterfallArea {
   private layoutObserver: ResizeObserver;
   private scrollSettleTimer: ReturnType<typeof setTimeout> | null = null;
   private nextPaneId = 1;
-  private prevCwd: Map<number, string> = new Map();
   private lastPointerPos: { x: number; y: number } | null = null;
 
   constructor(container: HTMLElement) {
@@ -35,20 +33,13 @@ export class WaterfallArea {
     this.layoutObserver.observe(this.el);
     this.el.addEventListener('scroll', () => this.scheduleEdgeSettle(), { passive: true });
 
-    // React to session changes — also detect cwd changes for auto-renaming
+    // React to session changes. Business policies such as auto-renaming live
+    // in SessionObserver so this component stays focused on layout/rendering.
     sessionManager.onChange((panes, activePaneId) => {
       for (const pane of this.panes.values()) {
         const info = panes.find(p => p.id === pane.paneId);
         if (info) {
           pane.updateInfo(info);
-
-          // If cwd changed and this pane is auto-named, update name to new dir
-          const prev = this.prevCwd.get(info.id);
-          if (prev !== undefined && prev !== info.cwd && isAutoNamed(info.id)) {
-            const newName = nameFromCwd(info.cwd);
-            if (newName) sessionManager.renamePane(info.id, newName);
-          }
-          this.prevCwd.set(info.id, info.cwd);
         }
         pane.setActive(pane.paneId === activePaneId);
       }
@@ -574,7 +565,7 @@ export class WaterfallArea {
     );
 
     try {
-      await invoke('pty_spawn', {
+      await transport.send('pty_spawn', {
         args: {
           pane_id: paneId,
           cwd: inheritedCwd || null,
@@ -598,10 +589,13 @@ export class WaterfallArea {
       note: '',
       status: 'idle' as const,
       cwd: opts.cwd || '~',
-      pty_pid: 0,
+      name_source: 'auto' as const,
       agent_type: 'none' as const,
       row_index: targetRowIndex,
       pane_index: 0,
+      last_command: null,
+      last_exit_code: null,
+      alternate_screen: false,
     };
 
     const pane = new TerminalPane(info, (id, prevRow) => this.handlePaneClose(id, prevRow));
@@ -642,18 +636,6 @@ export class WaterfallArea {
       if (modeManager.getMode().type === 'insert') {
         document.dispatchEvent(new CustomEvent('focus-inputbar'));
       }
-      // Auto-name from cwd if still on default name
-      const spawned = sessionManager.getPane(paneId);
-      if (spawned) {
-        this.prevCwd.set(paneId, spawned.cwd);
-        if (isDefaultName(spawned.name)) {
-          const cwdName = nameFromCwd(spawned.cwd);
-          if (cwdName) {
-            sessionManager.renamePane(paneId, cwdName);
-            markAutoNamed(paneId);
-          }
-        }
-      }
     });
 
     setTimeout(() => {
@@ -667,7 +649,6 @@ export class WaterfallArea {
     const fallback = this.pickFallbackPane(id, prevRow);
 
     this.panes.delete(id);
-    this.prevCwd.delete(id);
     // Remove empty rows; sync resize handles on rows that still have panes
     this.rowEls = this.rowEls.filter(row => {
       const termPanes = this.getTerminalPanes(row);

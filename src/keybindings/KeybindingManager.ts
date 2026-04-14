@@ -1,10 +1,10 @@
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { invoke } from '@tauri-apps/api/core';
 import { configContext } from '../config/ConfigContext';
 import type { WaterfallArea } from '../waterfall/WaterfallArea';
 import { modeManager } from '../input/ModeManager';
 import { sessionManager } from '../session/SessionManager';
 import type { SessionSidebar } from '../sidebar/SessionSidebar';
+import { workspaceActions } from '../workspace/WorkspaceActions';
 
 interface ActionHandlers {
   waterfallArea: WaterfallArea;
@@ -101,10 +101,10 @@ export class KeybindingManager {
 
     switch (action) {
       case 'NewTerminal':
-        waterfallArea.spawnPane({ newRow: true });
+        void workspaceActions.dispatch({ type: 'new' }, { source: 'keyboard' });
         break;
       case 'SplitHorizontal':
-        waterfallArea.splitCurrentRow();
+        void workspaceActions.dispatch({ type: 'split' }, { source: 'keyboard' });
         break;
       case 'ClosePane': {
         const pane = waterfallArea.getActivePane();
@@ -114,7 +114,7 @@ export class KeybindingManager {
           const ok = confirm(`Close "${info.name}"? A process is still running.`);
           if (!ok) break;
         }
-        pane.destroy();
+        void workspaceActions.dispatch({ type: 'close', target: String(pane.paneId) }, { source: 'keyboard' });
         modeManager.enterNormal();
         break;
       }
@@ -155,8 +155,7 @@ export class KeybindingManager {
               if (dist < minDist) { minDist = dist; targetId = p.id; }
             }
           }
-          sessionManager.setActivePane(targetId);
-          waterfallArea.scrollToPane(targetId);
+          void workspaceActions.dispatch({ type: 'focus', target: String(targetId) }, { source: 'keyboard' });
         }
         break;
       }
@@ -172,8 +171,7 @@ export class KeybindingManager {
         const delta = action === 'FocusNextPane' ? 1 : -1;
         const next = rowPanes[(idx + delta + rowPanes.length) % rowPanes.length];
         if (next) {
-          sessionManager.setActivePane(next.id);
-          waterfallArea.scrollToPane(next.id);
+          void workspaceActions.dispatch({ type: 'focus', target: String(next.id) }, { source: 'keyboard' });
         }
         break;
       }
@@ -187,7 +185,13 @@ export class KeybindingManager {
         const pane = waterfallArea.getActivePane();
         if (!pane) break;
         const group = prompt('Set group:', pane.getInfo().group);
-        if (group !== null) sessionManager.setPaneGroup(pane.paneId, group.trim() || 'default');
+        if (group !== null) {
+          void workspaceActions.dispatch({
+            type: 'group',
+            target: String(pane.paneId),
+            group: group.trim() || 'default',
+          }, { source: 'keyboard' });
+        }
         break;
       }
       case 'IncreaseFontSize':
@@ -205,7 +209,11 @@ export class KeybindingManager {
           if (!text) return;
           const activeId = sessionManager.getActivePaneId();
           if (activeId == null) return;
-          invoke('pty_write', { args: { pane_id: activeId, data: text } }).catch(console.error);
+          workspaceActions.dispatch({
+            type: 'paste',
+            target: String(activeId),
+            data: text,
+          }, { source: 'keyboard' }).catch(console.error);
         }).catch(console.error);
         break;
       case 'Quit':

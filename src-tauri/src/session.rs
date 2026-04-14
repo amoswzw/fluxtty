@@ -20,6 +20,18 @@ pub enum AgentType {
     Unknown,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum PaneNameSource {
+    Auto,
+    Manual,
+}
+
+impl Default for PaneNameSource {
+    fn default() -> Self {
+        PaneNameSource::Auto
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaneInfo {
@@ -29,10 +41,16 @@ pub struct PaneInfo {
     pub note: String,
     pub status: SessionStatus,
     pub cwd: String,
-    pub pty_pid: u32,
+    pub name_source: PaneNameSource,
     pub agent_type: AgentType,
     pub row_index: usize,
     pub pane_index: usize,
+    /// Last command submitted to the shell (captured via OSC 133;B).
+    pub last_command: Option<String>,
+    /// Exit code of the last completed command (captured via OSC 133;D).
+    pub last_exit_code: Option<i32>,
+    /// Whether the pane is currently in alternate screen mode (e.g. vim, htop).
+    pub alternate_screen: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,7 +84,7 @@ impl SessionManager {
         }
     }
 
-    pub fn create_pane(&mut self, id: u32, cwd: String, group: String, pty_pid: u32, row_index: usize) -> PaneInfo {
+    pub fn create_pane(&mut self, id: u32, cwd: String, group: String, row_index: usize) -> PaneInfo {
         // Keep next_id ahead of any explicitly-assigned id to avoid future collisions
         if id >= self.next_id {
             self.next_id = id + 1;
@@ -87,10 +105,13 @@ impl SessionManager {
             note: String::new(),
             status: SessionStatus::Idle,
             cwd,
-            pty_pid,
+            name_source: PaneNameSource::Auto,
             agent_type: AgentType::None,
             row_index,
             pane_index,
+            last_command: None,
+            last_exit_code: None,
+            alternate_screen: false,
         };
 
         // Add to layout
@@ -142,9 +163,10 @@ impl SessionManager {
         self.layout.active_pane_id
     }
 
-    pub fn rename_pane(&mut self, id: u32, name: String) {
+    pub fn rename_pane(&mut self, id: u32, name: String, name_source: PaneNameSource) {
         if let Some(pane) = self.panes.get_mut(&id) {
             pane.name = name;
+            pane.name_source = name_source;
         }
     }
 
@@ -175,6 +197,30 @@ impl SessionManager {
     pub fn set_pane_note(&mut self, id: u32, note: String) {
         if let Some(pane) = self.panes.get_mut(&id) {
             pane.note = note;
+        }
+    }
+
+    pub fn set_pane_last_command(&mut self, id: u32, cmd: String) {
+        if let Some(pane) = self.panes.get_mut(&id) {
+            pane.last_command = Some(cmd);
+            pane.status = SessionStatus::Running;
+        }
+    }
+
+    pub fn set_pane_command_done(&mut self, id: u32, exit_code: i32) {
+        if let Some(pane) = self.panes.get_mut(&id) {
+            pane.last_exit_code = Some(exit_code);
+            pane.status = if exit_code == 0 {
+                SessionStatus::Idle
+            } else {
+                SessionStatus::Error
+            };
+        }
+    }
+
+    pub fn set_pane_alternate_screen(&mut self, id: u32, active: bool) {
+        if let Some(pane) = self.panes.get_mut(&id) {
+            pane.alternate_screen = active;
         }
     }
 

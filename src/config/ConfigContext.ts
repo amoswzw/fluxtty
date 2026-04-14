@@ -1,5 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { transport } from '../transport';
 
 interface RgbColor {
   r: number;
@@ -51,19 +50,41 @@ export interface AppConfig {
   keybindings: Array<{ key: string; mods: string | null; action: string }>;
   input: { live_typing: boolean; workspace_scroll_modifier: string };
   workspace_ai: {
-    /** anthropic | openai | google | ollama | claude-cli | none  (inferred from model if omitted) */
-    provider: string | null;
-    /** Model name: claude-sonnet-4-6 | gpt-4o | gemini-2.0-flash | ollama/llama3 | none | claude-cli */
+    /** OpenCode-style provider/model id: anthropic/claude-sonnet-4-5, openai/gpt-4o, ollama/llama3 */
     model: string;
-    /** Env var name holding the API key */
-    api_key_env: string;
-    /** Base URL override — required for Ollama, useful for OpenAI-compatible endpoints */
-    base_url: string | null;
+    small_model?: string | null;
+    /** OpenCode-style provider map keyed by provider id. */
+    provider: Record<string, AiProviderConfig> | string | null;
+    /** Legacy fields retained for old configs. Prefer provider.<id>.options.apiKey/baseURL. */
+    api_key_env?: string;
+    base_url?: string | null;
     always_confirm_broadcast: boolean;
     always_confirm_multi_step: boolean;
+    agent_relay_auto_submit?: boolean;
   };
   waterfall: { row_height_mode: string; fixed_row_height: number; scroll_snap: boolean; new_pane_focus: boolean; note_width: number; pane_min_width: number; show_note_button: boolean; inactive_pane_scrim_strength: number };
-  persistence: { keep_alive: boolean; scrollback_lines: number; save_scrollback_on_exit: boolean };
+  persistence: { restore_workspace_on_launch: boolean; scrollback_lines: number; save_scrollback_on_exit: boolean };
+}
+
+export interface AiProviderConfig {
+  name?: string | null;
+  npm?: string | null;
+  options?: Record<string, unknown>;
+  models?: Record<string, AiModelConfig>;
+}
+
+export interface AiModelConfig {
+  id?: string | null;
+  name?: string | null;
+  options?: Record<string, unknown>;
+  variants?: Record<string, AiModelVariantConfig>;
+}
+
+export interface AiModelVariantConfig {
+  id?: string | null;
+  name?: string | null;
+  disabled?: boolean;
+  options?: Record<string, unknown>;
 }
 
 type ConfigListener = (config: AppConfig) => void;
@@ -73,11 +94,11 @@ class ConfigContext {
   private listeners: ConfigListener[] = [];
 
   async init() {
-    this.config = await invoke<AppConfig>('config_get');
+    this.config = await transport.send<AppConfig>('config_get');
     this.applyToDOM(this.config);
 
-    await listen<AppConfig>('config:changed', (event) => {
-      this.config = event.payload;
+    await transport.listen<AppConfig>('config:changed', (config) => {
+      this.config = config;
       this.applyToDOM(this.config);
       this.listeners.forEach(l => l(this.config!));
     });

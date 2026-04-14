@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -131,15 +132,70 @@ pub struct WorkspaceAiConfig {
     pub always_confirm_broadcast: bool,
     pub always_confirm_multi_step: bool,
     pub agent_relay_auto_submit: bool,
-    /// Provider: anthropic | openai | google | ollama | claude-cli | none
-    /// If omitted, inferred from the model name.
-    pub provider: Option<String>,
-    /// Model name, e.g. claude-sonnet-4-6, gpt-4o, gemini-2.0-flash, ollama/llama3
+    /// OpenCode-style provider/model id, e.g. anthropic/claude-sonnet-4-5.
     pub model: String,
-    /// Name of the environment variable that holds the API key
+    /// Optional lighter-weight model for future summary/title tasks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub small_model: Option<String>,
+    /// OpenCode-style provider map keyed by provider id.
+    #[serde(deserialize_with = "deserialize_ai_provider_map")]
+    pub provider: BTreeMap<String, AiProviderConfig>,
+    /// Legacy: name of the environment variable that holds the API key.
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub api_key_env: String,
-    /// Override the API base URL (required for Ollama, useful for custom OpenAI-compatible endpoints)
+    /// Legacy: override API base URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct AiProviderConfig {
+    pub name: Option<String>,
+    pub npm: Option<String>,
+    pub options: BTreeMap<String, serde_json::Value>,
+    pub models: BTreeMap<String, AiModelConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct AiModelConfig {
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub options: BTreeMap<String, serde_json::Value>,
+    pub variants: BTreeMap<String, AiModelVariantConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct AiModelVariantConfig {
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub disabled: bool,
+    pub options: BTreeMap<String, serde_json::Value>,
+}
+
+fn deserialize_ai_provider_map<'de, D>(deserializer: D) -> Result<BTreeMap<String, AiProviderConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+
+    let value = Option::<serde_yaml::Value>::deserialize(deserializer)?;
+    match value {
+        None | Some(serde_yaml::Value::Null) => Ok(BTreeMap::new()),
+        Some(serde_yaml::Value::String(provider_id)) => {
+            let mut providers = BTreeMap::new();
+            if !provider_id.trim().is_empty() {
+                providers.insert(provider_id, AiProviderConfig::default());
+            }
+            Ok(providers)
+        }
+        Some(serde_yaml::Value::Mapping(map)) => {
+            serde_yaml::from_value(serde_yaml::Value::Mapping(map)).map_err(D::Error::custom)
+        }
+        Some(other) => Err(D::Error::custom(format!("workspace_ai.provider must be a provider map, string, or null; got {:?}", other))),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,7 +214,10 @@ pub struct WaterfallConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PersistenceConfig {
-    pub keep_alive: bool,
+    /// Restore the workspace layout on next launch.
+    /// The legacy YAML key `keep_alive` is still accepted as an alias.
+    #[serde(alias = "keep_alive")]
+    pub restore_workspace_on_launch: bool,
     pub disk_state_path: String,
     pub scrollback_lines: u32,
     pub save_scrollback_on_exit: bool,
@@ -348,9 +407,10 @@ impl Default for WorkspaceAiConfig {
             always_confirm_broadcast: true,
             always_confirm_multi_step: true,
             agent_relay_auto_submit: false,
-            provider: None,
             model: "none".to_string(),
-            api_key_env: "ANTHROPIC_API_KEY".to_string(),
+            small_model: None,
+            provider: BTreeMap::new(),
+            api_key_env: String::new(),
             base_url: None,
         }
     }
@@ -374,7 +434,7 @@ impl Default for WaterfallConfig {
 impl Default for PersistenceConfig {
     fn default() -> Self {
         PersistenceConfig {
-            keep_alive: true,
+            restore_workspace_on_launch: true,
             disk_state_path: "~/.local/share/fluxtty/workspace.json".to_string(),
             scrollback_lines: 5000,
             save_scrollback_on_exit: true,
@@ -432,4 +492,85 @@ pub type SharedConfig = Arc<Mutex<Config>>;
 
 pub fn new_shared_config() -> SharedConfig {
     Arc::new(Mutex::new(load_config()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_opencode_style_workspace_ai_provider_map() {
+        let cfg: Config = serde_yaml::from_str(r#"
+workspace_ai:
+  model: openai/gpt-5
+  small_model: openai/gpt-5-mini
+  provider:
+    openai:
+      options:
+        apiKey: "{env:OPENAI_API_KEY}"
+      models:
+        gpt-5:
+          options:
+            reasoningEffort: high
+"#).unwrap();
+
+        let provider = cfg.workspace_ai.provider.get("openai").unwrap();
+        assert_eq!(cfg.workspace_ai.model, "openai/gpt-5");
+        assert_eq!(cfg.workspace_ai.small_model.as_deref(), Some("openai/gpt-5-mini"));
+        assert_eq!(provider.options.get("apiKey").and_then(|v| v.as_str()), Some("{env:OPENAI_API_KEY}"));
+        assert_eq!(
+            provider.models["gpt-5"].options.get("reasoningEffort").and_then(|v| v.as_str()),
+            Some("high"),
+        );
+    }
+
+    #[test]
+    fn legacy_workspace_ai_provider_string_remains_accepted() {
+        let cfg: Config = serde_yaml::from_str(r#"
+workspace_ai:
+  model: claude-sonnet-4-5
+  provider: anthropic
+  api_key_env: ANTHROPIC_API_KEY
+"#).unwrap();
+
+        assert!(cfg.workspace_ai.provider.contains_key("anthropic"));
+        assert_eq!(cfg.workspace_ai.api_key_env, "ANTHROPIC_API_KEY");
+        assert_eq!(cfg.workspace_ai.model, "claude-sonnet-4-5");
+    }
+
+    #[test]
+    fn workspace_ai_provider_can_be_omitted() {
+        let cfg: Config = serde_yaml::from_str(r#"
+workspace_ai:
+  model: none
+"#).unwrap();
+
+        assert!(cfg.workspace_ai.provider.is_empty());
+        assert_eq!(cfg.workspace_ai.model, "none");
+    }
+
+    #[test]
+    fn persistence_restore_workspace_on_launch_new_key() {
+        let cfg: Config = serde_yaml::from_str(r#"
+persistence:
+  restore_workspace_on_launch: false
+"#).unwrap();
+        assert!(!cfg.persistence.restore_workspace_on_launch);
+    }
+
+    #[test]
+    fn persistence_keep_alive_legacy_alias_accepted() {
+        // Old config files that still use `keep_alive` must continue to work.
+        let cfg: Config = serde_yaml::from_str(r#"
+persistence:
+  keep_alive: false
+"#).unwrap();
+        assert!(!cfg.persistence.restore_workspace_on_launch);
+    }
+
+    #[test]
+    fn persistence_defaults_to_true() {
+        let cfg: Config = serde_yaml::from_str("{}").unwrap();
+        assert!(cfg.persistence.restore_workspace_on_launch);
+    }
 }

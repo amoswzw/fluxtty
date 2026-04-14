@@ -76,20 +76,35 @@ fn setup_zsh() -> ShellIntegration {
     let _ = std::fs::remove_file(zdotdir.join(".zshenv"));
 
     // .zshrc — runs for interactive shells.
-    // precmd_functions/chpwd_functions are plain arrays; appending to them is
-    // zero call-stack overhead.  add-zsh-hook is intentionally avoided because
-    // it is an autoloaded function whose first invocation loads a file from
-    // $fpath, adding depth that can overflow FUNCNEST in heavily-plugined setups.
-    // _wt_cwd is emitted once immediately (before sourcing the user's .zshrc)
-    // so the initial CWD notification fires at the shallowest possible depth.
+    // precmd_functions/chpwd_functions/preexec_functions are plain arrays.
+    // add-zsh-hook is intentionally avoided (can overflow FUNCNEST in heavily
+    // plugined setups).
+    //
+    // OSC 133 shell integration:
+    //   _wt_precmd — runs before each prompt:
+    //     • saves $? so later functions can't clobber it
+    //     • emits OSC 133;D;exitcode (previous command done)
+    //     • emits OSC 7 CWD
+    //     • emits OSC 133;A (prompt start)
+    //   _wt_preexec — runs just before each command executes:
+    //     • emits OSC 133;B;cmd=<command> (command start, first 512 chars)
+    //   chpwd still fires _wt_cwd on plain `cd` between prompts.
     let zshrc = format!(r#"# fluxtty — auto-generated, do not edit
 if [[ -z "$_FLUXTTY_INIT" ]]; then
   export _FLUXTTY_INIT=1
   _wt_cwd() {{ printf '\033]7;file://%s%s\033\\' "$HOST" "$PWD"; }}
-  typeset -ga precmd_functions chpwd_functions
-  precmd_functions+=(_wt_cwd)
+  _wt_precmd() {{
+    local _ec=$?
+    printf '\033]133;D;%d\033\\' "$_ec"
+    _wt_cwd
+    printf '\033]133;A\033\\'
+  }}
+  _wt_preexec() {{ printf '\033]133;B;cmd=%.512s\033\\' "$1"; }}
+  typeset -ga precmd_functions chpwd_functions preexec_functions
+  precmd_functions+=(_wt_precmd)
   chpwd_functions+=(_wt_cwd)
-  _wt_cwd
+  preexec_functions+=(_wt_preexec)
+  _wt_precmd
 fi
 export ZDOTDIR="{orig}"
 [[ -f "{orig}/.zshrc" ]] && source "{orig}/.zshrc"
@@ -113,11 +128,33 @@ fn setup_bash(user_args: &[String]) -> ShellIntegration {
     }
 
     let init_path = init_dir.join("bash-init.sh");
+    // OSC 133 shell integration for bash:
+    //   _wt_precmd_bash — runs via PROMPT_COMMAND before each prompt:
+    //     captures $?, emits OSC 133;D, OSC 7 CWD, OSC 133;A.
+    //   DEBUG trap — runs before each command to emit OSC 133;B.
+    //     Uses $_wt_cmd_pending flag to emit only the first expansion per
+    //     interactive command (the DEBUG trap fires for every pipeline stage,
+    //     so we guard with a flag cleared in PROMPT_COMMAND).
     let init_script = r#"# fluxtty — auto-generated, do not edit
 if [[ -z "$_FLUXTTY_INIT" ]]; then
   export _FLUXTTY_INIT=1
   _wt_cwd() { printf '\033]7;file://%s%s\007' "${HOSTNAME:-$(hostname)}" "$PWD"; }
-  _wt_cwd
+  _wt_precmd_bash() {
+    local _ec=$?
+    printf '\033]133;D;%d\007' "$_ec"
+    _wt_cwd
+    printf '\033]133;A\007'
+    _wt_cmd_pending=1
+  }
+  _wt_preexec_bash() {
+    if [[ "$_wt_cmd_pending" == "1" && "$BASH_COMMAND" != "_wt_precmd_bash" ]]; then
+      _wt_cmd_pending=0
+      printf '\033]133;B;cmd=%.512s\007' "$BASH_COMMAND"
+    fi
+  }
+  _wt_cmd_pending=1
+  trap '_wt_preexec_bash' DEBUG
+  _wt_precmd_bash
 fi
 if shopt -q login_shell 2>/dev/null; then
   for _f in ~/.bash_profile ~/.bash_login ~/.profile; do
@@ -127,10 +164,11 @@ if shopt -q login_shell 2>/dev/null; then
 else
   [[ -f ~/.bashrc ]] && source ~/.bashrc
 fi
-# Re-attach hook in case rc files overwrote PROMPT_COMMAND
-if [[ "$PROMPT_COMMAND" != *_wt_cwd* ]]; then
-  PROMPT_COMMAND="_wt_cwd${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+# Re-attach hooks in case rc files overwrote PROMPT_COMMAND / DEBUG trap
+if [[ "$PROMPT_COMMAND" != *_wt_precmd_bash* ]]; then
+  PROMPT_COMMAND="_wt_precmd_bash${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
 fi
+trap '_wt_preexec_bash' DEBUG
 "#;
     let _ = std::fs::write(&init_path, init_script);
 
@@ -170,18 +208,117 @@ fn setup_fish() -> ShellIntegration {
     if std::fs::create_dir_all(&conf_d).is_err() {
         return ShellIntegration::default();
     }
+    // fish auto-sources every *.fish file in conf.d at startup — idempotent.
+    // OSC 133 integration:
+    //   fish_prompt event → OSC 133;D (exit code of last cmd), OSC 7, OSC 133;A
+    //   fish_preexec event → OSC 133;B;cmd=<command>
     let script = r#"# fluxtty — auto-generated, do not edit
 if not set -q _FLUXTTY_INIT
   set -gx _FLUXTTY_INIT 1
-  function _wt_cwd_prompt --on-event fish_prompt
+  function _wt_precmd_fish --on-event fish_prompt
+    printf '\033]133;D;%d\033\\' $status
     printf '\033]7;file://%s%s\033\\' (hostname) $PWD
+    printf '\033]133;A\033\\'
   end
-  _wt_cwd_prompt
+  function _wt_preexec_fish --on-event fish_preexec
+    printf '\033]133;B;cmd=%.512s\033\\' $argv[1]
+  end
+  _wt_precmd_fish
 end
 "#;
     let _ = std::fs::write(conf_d.join("fluxtty.fish"), script);
     ShellIntegration::default()
 }
+
+// ── OSC 133 shell integration parser ────────────────────────────────────────
+
+/// Events decoded from OSC 133 sequences emitted by the shell integration hooks.
+#[derive(Debug, PartialEq)]
+pub enum Osc133Event {
+    /// 133;A — prompt is about to be drawn.
+    PromptStart,
+    /// 133;B[;cmd=<text>] — a command is about to execute.
+    CommandStart { cmd: Option<String> },
+    /// 133;C — command output is about to begin (rarely used; kept for completeness).
+    CommandOutput,
+    /// 133;D;exitcode — command finished with the given exit code.
+    CommandDone { exit_code: i32 },
+}
+
+/// Parse all OSC 133 sequences present in `data`.
+/// Handles both BEL (0x07) and ST (ESC \) terminators.
+pub fn parse_osc133(data: &str) -> Vec<Osc133Event> {
+    let prefix = "\x1b]133;";
+    let mut events = Vec::new();
+    let mut search = data;
+
+    while let Some(rel) = search.find(prefix) {
+        search = &search[rel + prefix.len()..];
+
+        // Find terminator — take whichever comes first.
+        let end_bel = search.find('\x07');
+        let end_st  = search.find("\x1b\\");
+        let end = match (end_bel, end_st) {
+            (Some(a), Some(b)) => a.min(b),
+            (Some(a), None)    => a,
+            (None,    Some(b)) => b,
+            (None,    None)    => search.len(),
+        };
+
+        let seq = &search[..end];
+        if let Some(ev) = parse_one_osc133(seq) {
+            events.push(ev);
+        }
+
+        // Advance past the terminator.
+        if end < search.len() {
+            let term_len = if search[end..].starts_with("\x1b\\") { 2 } else { 1 };
+            search = &search[end + term_len..];
+        } else {
+            break;
+        }
+    }
+
+    events
+}
+
+fn parse_one_osc133(seq: &str) -> Option<Osc133Event> {
+    let first = seq.chars().next()?;
+    match first {
+        'A' => Some(Osc133Event::PromptStart),
+        'B' => {
+            // Optional suffix: ;cmd=<text>
+            let cmd = seq.strip_prefix("B;cmd=").map(|s| s.to_string());
+            Some(Osc133Event::CommandStart { cmd })
+        }
+        'C' => Some(Osc133Event::CommandOutput),
+        'D' => {
+            let code_str = seq.strip_prefix("D;").unwrap_or("0");
+            let exit_code = code_str.parse::<i32>().unwrap_or(0);
+            Some(Osc133Event::CommandDone { exit_code })
+        }
+        _ => None,
+    }
+}
+
+// ── Alternate-screen detection ───────────────────────────────────────────────
+
+/// Returns `Some(true)` if the data chunk enters alternate screen,
+/// `Some(false)` if it exits, `None` if neither sequence is present.
+pub fn parse_alternate_screen(data: &str) -> Option<bool> {
+    // Scan once for both markers; take the last occurrence to handle the rare
+    // case where a single chunk contains both enter and exit.
+    let enter = data.rfind("\x1b[?1049h");
+    let exit  = data.rfind("\x1b[?1049l");
+    match (enter, exit) {
+        (Some(a), Some(b)) => Some(a > b), // whichever is later wins
+        (Some(_), None)    => Some(true),
+        (None,    Some(_)) => Some(false),
+        (None,    None)    => None,
+    }
+}
+
+// ── OSC 7 ────────────────────────────────────────────────────────────────────
 
 /// Parse an OSC 7 sequence from a PTY data chunk.
 /// Format: ESC ] 7 ; file://hostname/path ST  (ST = BEL or ESC \)
@@ -332,12 +469,48 @@ impl PtyManager {
                             }
                         }
 
-                        // Parse OSC 7 → update session CWD
-                        if let Some(new_cwd) = parse_osc7(&data_str) {
-                            if let Ok(mut session) = session_mgr.lock() {
-                                session.set_pane_cwd(pane_id, new_cwd);
-                                let all = session.all_panes();
-                                let _ = app.emit("session:changed", all);
+                        // Parse all escape-sequence metadata before acquiring
+                        // the session lock so we hold the lock as briefly as possible.
+                        let new_cwd       = parse_osc7(&data_str);
+                        let osc133_events = parse_osc133(&data_str);
+                        let alt_screen    = parse_alternate_screen(&data_str);
+
+                        let state_changed = new_cwd.is_some()
+                            || !osc133_events.is_empty()
+                            || alt_screen.is_some();
+
+                        if state_changed {
+                            let all_panes = if let Ok(mut session) = session_mgr.lock() {
+                                if let Some(cwd) = new_cwd {
+                                    session.set_pane_cwd(pane_id, cwd);
+                                }
+                                for event in osc133_events {
+                                    match event {
+                                        Osc133Event::CommandStart { cmd } => {
+                                            if let Some(cmd_text) = cmd {
+                                                let trimmed = cmd_text.trim().to_string();
+                                                if !trimmed.is_empty() {
+                                                    session.set_pane_last_command(pane_id, trimmed);
+                                                }
+                                            }
+                                        }
+                                        Osc133Event::CommandDone { exit_code } => {
+                                            session.set_pane_command_done(pane_id, exit_code);
+                                            let _ = app.emit("pane:command_complete",
+                                                serde_json::json!({ "pane_id": pane_id, "exit_code": exit_code }));
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                if let Some(active) = alt_screen {
+                                    session.set_pane_alternate_screen(pane_id, active);
+                                }
+                                session.all_panes()
+                            } else {
+                                vec![]
+                            };
+                            if !all_panes.is_empty() {
+                                let _ = app.emit("session:changed", all_panes);
                             }
                         }
 
@@ -405,4 +578,153 @@ pub type SharedPtyManager = Arc<Mutex<PtyManager>>;
 
 pub fn new_shared_pty_manager(max_scrollback: usize) -> SharedPtyManager {
     Arc::new(Mutex::new(PtyManager::new(max_scrollback)))
+}
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── parse_osc133 ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_osc133_prompt_start_bel() {
+        let data = "\x1b]133;A\x07";
+        let events = parse_osc133(data);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], Osc133Event::PromptStart));
+    }
+
+    #[test]
+    fn test_osc133_prompt_start_st() {
+        let data = "\x1b]133;A\x1b\\";
+        let events = parse_osc133(data);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], Osc133Event::PromptStart));
+    }
+
+    #[test]
+    fn test_osc133_command_start_no_cmd() {
+        let data = "\x1b]133;B\x07";
+        let events = parse_osc133(data);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Osc133Event::CommandStart { cmd } => assert!(cmd.is_none()),
+            _ => panic!("expected CommandStart"),
+        }
+    }
+
+    #[test]
+    fn test_osc133_command_start_with_cmd() {
+        let data = "\x1b]133;B;cmd=cargo build\x07";
+        let events = parse_osc133(data);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Osc133Event::CommandStart { cmd } => {
+                assert_eq!(cmd.as_deref(), Some("cargo build"));
+            }
+            _ => panic!("expected CommandStart"),
+        }
+    }
+
+    #[test]
+    fn test_osc133_command_done_zero() {
+        let data = "\x1b]133;D;0\x07";
+        let events = parse_osc133(data);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], Osc133Event::CommandDone { exit_code: 0 }));
+    }
+
+    #[test]
+    fn test_osc133_command_done_nonzero() {
+        let data = "\x1b]133;D;127\x07";
+        let events = parse_osc133(data);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], Osc133Event::CommandDone { exit_code: 127 }));
+    }
+
+    #[test]
+    fn test_osc133_multiple_events_in_one_chunk() {
+        // Simulate a chunk that contains D (done) then A (prompt start) then the prompt text.
+        let data = "some output\x1b]133;D;0\x07\x1b]133;A\x07$ ";
+        let events = parse_osc133(data);
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], Osc133Event::CommandDone { exit_code: 0 }));
+        assert!(matches!(events[1], Osc133Event::PromptStart));
+    }
+
+    #[test]
+    fn test_osc133_embedded_in_normal_output() {
+        let data = "normal text\x1b]133;B;cmd=git status\x1b\\more text";
+        let events = parse_osc133(data);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Osc133Event::CommandStart { cmd } => {
+                assert_eq!(cmd.as_deref(), Some("git status"));
+            }
+            _ => panic!("expected CommandStart"),
+        }
+    }
+
+    #[test]
+    fn test_osc133_no_sequences() {
+        let data = "hello world\r\n$ ";
+        let events = parse_osc133(data);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_osc133_unknown_command_ignored() {
+        let data = "\x1b]133;Z\x07";
+        let events = parse_osc133(data);
+        assert!(events.is_empty());
+    }
+
+    // ── parse_alternate_screen ────────────────────────────────────────────────
+
+    #[test]
+    fn test_alt_screen_enter() {
+        let data = "\x1b[?1049h";
+        assert_eq!(parse_alternate_screen(data), Some(true));
+    }
+
+    #[test]
+    fn test_alt_screen_exit() {
+        let data = "\x1b[?1049l";
+        assert_eq!(parse_alternate_screen(data), Some(false));
+    }
+
+    #[test]
+    fn test_alt_screen_none() {
+        let data = "no escape sequences here";
+        assert_eq!(parse_alternate_screen(data), None);
+    }
+
+    #[test]
+    fn test_alt_screen_exit_after_enter_in_same_chunk() {
+        // Enter then exit in same chunk → exit (last one) wins.
+        let data = "\x1b[?1049h some output \x1b[?1049l";
+        assert_eq!(parse_alternate_screen(data), Some(false));
+    }
+
+    #[test]
+    fn test_alt_screen_enter_after_exit_in_same_chunk() {
+        let data = "\x1b[?1049l then \x1b[?1049h";
+        assert_eq!(parse_alternate_screen(data), Some(true));
+    }
+
+    // ── parse_osc7 ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_osc7_bel() {
+        let data = "\x1b]7;file://myhostname/Users/alice/projects\x07";
+        assert_eq!(parse_osc7(data), Some("/Users/alice/projects".to_string()));
+    }
+
+    #[test]
+    fn test_osc7_st() {
+        let data = "\x1b]7;file://myhostname/home/bob/src\x1b\\";
+        assert_eq!(parse_osc7(data), Some("/home/bob/src".to_string()));
+    }
 }

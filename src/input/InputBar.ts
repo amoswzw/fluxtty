@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import type { InputMode, AgentType } from '../session/types';
 import { AGENT_SLASH_COMMANDS } from '../session/types';
 import { modeManager } from './ModeManager';
@@ -7,9 +6,10 @@ import { PaneSelector } from './PaneSelector';
 import { sessionManager } from '../session/SessionManager';
 import { aiHandler } from '../ai/ai-handler';
 import { planExecutor } from '../ai/plan-executor';
-import { suggestName, isSignificantCommand, isDefaultName, markAutoNamed, isAutoNamed } from '../session/AutoNamer';
 import { configContext } from '../config/ConfigContext';
 import { hintManager, type ActiveHint } from '../hints/HintManager';
+import { transport } from '../transport';
+import { workspaceActions } from '../workspace/WorkspaceActions';
 
 function longestCommonPrefix(strs: string[]): string {
   if (strs.length === 0) return '';
@@ -253,15 +253,22 @@ export class InputBar {
     const active = document.activeElement;
     const target = e.target instanceof Element ? e.target : null;
     const focusInTextEditor = isEditableElement(active) || isEditableElement(target);
-    if (mode.type === 'normal' && active !== this.inputEl && !focusInTextEditor && !this.paneSelector.isOpen()) {
-      // Meta-modified keys are global app shortcuts (Quit, Settings, ClosePane…)
-      // handled by KeybindingManager. Don't intercept them here — KeybindingManager
-      // runs its own document capture listener AFTER this window listener, and it
-      // checks e.defaultPrevented. If we call handleKeyDown first it calls
-      // e.preventDefault() and KeybindingManager silently skips the shortcut.
-      if (e.metaKey) return;
-      this.inputEl.focus();
-      this.handleKeyDown(e);
+    if (active !== this.inputEl && !focusInTextEditor && !this.paneSelector.isOpen()) {
+      if (mode.type === 'normal') {
+        // Meta-modified keys are global app shortcuts (Quit, Settings, ClosePane…)
+        // handled by KeybindingManager. Don't intercept them here — KeybindingManager
+        // runs its own document capture listener AFTER this window listener, and it
+        // checks e.defaultPrevented. If we call handleKeyDown first it calls
+        // e.preventDefault() and KeybindingManager silently skips the shortcut.
+        if (e.metaKey) return;
+        this.inputEl.focus();
+        this.handleKeyDown(e);
+      } else if (mode.type === 'insert') {
+        // Focus was stolen (e.g. clicking a close button). Re-anchor to inputEl
+        // and forward the keystroke so nothing is lost.
+        this.inputEl.focus();
+        this.handleKeyDown(e);
+      }
     }
   }
 
@@ -648,11 +655,11 @@ export class InputBar {
 
   private async submitToShell() {
     const text = this.inputEl.value;
-    if (!text.trim() && text === '') {
+    if (!text.trim()) {
       // Empty Enter still sends newline (e.g. confirms prompts in shell/claude)
       const activeId = sessionManager.getActivePaneId();
       if (activeId == null) return;
-      await invoke('pty_write', { args: { pane_id: activeId, data: '\r' } }).catch(console.error);
+      await workspaceActions.dispatch({ type: 'write', target: String(activeId), data: '\r' }, { source: 'ui' }).catch(console.error);
       return;
     }
 
@@ -669,20 +676,7 @@ export class InputBar {
     const activeId = sessionManager.getActivePaneId();
     if (activeId == null) return;
 
-    // Auto-name pane only for significant commands (AI agents, editors, interactive sessions).
-    // Transient commands (ls, git, cd, npm run…) leave the cwd-derived name unchanged.
-    if (isSignificantCommand(text.trim())) {
-      const pane = sessionManager.getActivePane();
-      if (pane && (isDefaultName(pane.name) || isAutoNamed(pane.id))) {
-        const suggested = suggestName(text.trim(), pane.cwd);
-        if (suggested) {
-          sessionManager.renamePane(activeId, suggested);
-          markAutoNamed(activeId);
-        }
-      }
-    }
-
-    await invoke('pty_write', { args: { pane_id: activeId, data: text + '\r' } }).catch(console.error);
+    await workspaceActions.dispatch({ type: 'run', target: String(activeId), cmd: text }, { source: 'ui' }).catch(console.error);
     document.dispatchEvent(new CustomEvent('scroll-to-active-pane'));
     this.notifyInsertCommandSubmitted(text, activeId);
   }
@@ -690,7 +684,7 @@ export class InputBar {
   private async sendKeyToPTY(data: string) {
     const activeId = sessionManager.getActivePaneId();
     if (activeId == null) return;
-    await invoke('pty_write', { args: { pane_id: activeId, data } }).catch(console.error);
+    await workspaceActions.dispatch({ type: 'write', target: String(activeId), data }, { source: 'ui' }).catch(console.error);
   }
 
   // ── Local command history ─────────────────────────────────────────
@@ -749,8 +743,7 @@ export class InputBar {
 
   private handlePaneSelected(paneId: number) {
     this.inputEl.value = '';
-    sessionManager.setActivePane(paneId);
-    document.dispatchEvent(new CustomEvent('scroll-to-active-pane'));
+    void workspaceActions.dispatch({ type: 'focus', target: String(paneId) }, { source: 'ui' });
     this.inputEl.focus();
     modeManager.enterNormal();
   }
@@ -977,7 +970,7 @@ export class InputBar {
 
     let completions: string[];
     try {
-      completions = await invoke<string[]>('shell_complete', { args: { input, cwd } });
+      completions = await transport.send<string[]>('shell_complete', { args: { input, cwd } });
     } catch (e) {
       console.error('shell_complete error:', e);
       return;

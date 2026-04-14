@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { transport } from '../transport';
 import { configContext } from '../config/ConfigContext';
 import { llmClient } from '../ai/llm-client';
 import { hintManager } from '../hints/HintManager';
@@ -142,11 +142,12 @@ function kbLabel(key: string, mods: string | undefined): string {
 }
 
 const KNOWN_PROVIDERS = [
-  '',             // auto-detect from model name
   'anthropic',
   'openai',
   'google',
   'ollama',
+  'lmstudio',
+  'openrouter',
   'claude-cli',
 ];
 
@@ -154,19 +155,16 @@ const KNOWN_MODELS = [
   'none',
   'claude-cli',
   // Anthropic
-  'claude-opus-4-6',
-  'claude-sonnet-4-6',
-  'claude-haiku-4-5-20251001',
+  'anthropic/claude-sonnet-4-5',
+  'anthropic/claude-opus-4-1',
+  'anthropic/claude-haiku-4-5',
   // OpenAI
-  'gpt-4o',
-  'gpt-4o-mini',
-  'o1',
-  'o3-mini',
-  'o4-mini',
+  'openai/gpt-5',
+  'openai/gpt-5-mini',
+  'openai/gpt-4o',
   // Google
-  'gemini-2.0-flash',
-  'gemini-2.5-pro',
-  'gemini-1.5-pro',
+  'google/gemini-2.5-pro',
+  'google/gemini-2.5-flash',
   // Ollama (common local models)
   'ollama/llama3',
   'ollama/llama3.1',
@@ -174,7 +172,50 @@ const KNOWN_MODELS = [
   'ollama/qwen2.5',
   'ollama/deepseek-r1',
   'ollama/phi4',
+  // OpenAI-compatible examples
+  'lmstudio/google/gemma-3n-e4b',
+  'openrouter/anthropic/claude-sonnet-4.5',
 ];
+
+function ensureAiProviderMap(wai: any): Record<string, any> {
+  if (!wai.provider || typeof wai.provider === 'string') {
+    const legacy = typeof wai.provider === 'string' ? wai.provider.trim() : '';
+    wai.provider = {};
+    if (legacy) wai.provider[legacy] = { options: {}, models: {} };
+  }
+  return wai.provider;
+}
+
+function splitOpenCodeModelId(model: string, providers: Record<string, any>): { providerId: string; modelKey: string } {
+  const trimmed = model.trim();
+  const slash = trimmed.indexOf('/');
+  if (slash > 0) {
+    return { providerId: trimmed.slice(0, slash), modelKey: trimmed.slice(slash + 1) };
+  }
+  const inferred = trimmed.startsWith('claude-') ? 'anthropic'
+    : trimmed.startsWith('gpt-') || trimmed.startsWith('o') ? 'openai'
+      : trimmed.startsWith('gemini-') ? 'google'
+        : Object.keys(providers)[0] ?? 'openai';
+  return { providerId: inferred, modelKey: trimmed };
+}
+
+function stringifyJsonObject(value: unknown): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '{}';
+  return JSON.stringify(value, null, 2);
+}
+
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  const trimmed = text.trim();
+  if (!trimmed) return {};
+  try {
+    const parsed = JSON.parse(trimmed);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 const WORKSPACE_SCROLL_MODIFIER_OPTIONS = [
   { value: 'meta', label: 'Command' },
@@ -679,7 +720,7 @@ const SECTIONS: Section[] = [
       {
         label: 'Persistence',
         fields: [
-          { path: 'persistence.keep_alive',              label: 'Keep alive',              type: 'checkbox', desc: 'PTYs keep running after window close' },
+          { path: 'persistence.restore_workspace_on_launch', label: 'Restore workspace on launch', type: 'checkbox', desc: 'Restore session layout when the app is reopened' },
           { path: 'persistence.tray_icon',               label: 'Tray icon',               type: 'checkbox' },
           { path: 'persistence.disk_state_path',         label: 'State file path',         type: 'text' },
           { path: 'persistence.scrollback_lines',        label: 'Scrollback lines saved',  type: 'number', min: 0, max: 100000, step: 500 },
@@ -983,17 +1024,30 @@ const SECTIONS: Section[] = [
             const model: string = wai.model ?? 'none';
             const isNone = !model || model === 'none';
             const isCli = model === 'claude-cli';
-            const needsKey = !isNone && !isCli;
+            const providers = ensureAiProviderMap(wai);
+            const { providerId, modelKey } = splitOpenCodeModelId(model, providers);
+            if (!isNone && !isCli && !providers[providerId]) {
+              providers[providerId] = { options: {}, models: {} };
+            }
+            const providerCfg = providers[providerId] ?? { options: {}, models: {} };
+            providerCfg.options ??= {};
+            providerCfg.models ??= {};
+            const modelCfg = providerCfg.models[modelKey] ?? { options: {} };
+            modelCfg.options ??= {};
+            if (!isNone && !isCli) {
+              providers[providerId] = providerCfg;
+              providerCfg.models[modelKey] = modelCfg;
+            }
 
             // ── Model ────────────────────────────────────────────────────
             const modelRow = document.createElement('div');
             modelRow.className = 'st-field';
             const modelLabel = document.createElement('label');
             modelLabel.className = 'st-label';
-            modelLabel.textContent = 'Model';
+            modelLabel.textContent = 'Model ID';
             const modelDesc = document.createElement('span');
             modelDesc.className = 'st-desc';
-            modelDesc.textContent = 'claude-sonnet-4-6 · gpt-4o · gemini-2.0-flash · ollama/llama3 · claude-cli';
+            modelDesc.textContent = 'OpenCode-style provider/model, for example anthropic/claude-sonnet-4-5 or openai/gpt-5';
             modelLabel.appendChild(modelDesc);
             modelRow.appendChild(modelLabel);
 
@@ -1020,66 +1074,93 @@ const SECTIONS: Section[] = [
             el.appendChild(modelRow);
 
             if (isCli) {
-              // claude-cli note
               const note = document.createElement('div');
               note.className = 'st-field st-info-note';
               note.textContent = 'claude-cli runs the `claude` CLI installed on your system. No API key needed — uses your existing Claude Code login.';
               el.appendChild(note);
             }
 
-            // ── Provider (hidden for claude-cli / none) ───────────────
             if (!isNone && !isCli) {
-              const provRow = document.createElement('div');
-              provRow.className = 'st-field';
-              const provLabel = document.createElement('label');
-              provLabel.className = 'st-label';
-              provLabel.textContent = 'Provider';
-              const provDesc = document.createElement('span');
-              provDesc.className = 'st-desc';
-              provDesc.textContent = 'Leave blank to auto-detect (claude-* → anthropic, gpt-* → openai, etc.)';
-              provLabel.appendChild(provDesc);
-              provRow.appendChild(provLabel);
-              const provSel = document.createElement('select');
-              provSel.className = 'st-input';
-              for (const p of KNOWN_PROVIDERS.filter(p => p !== 'claude-cli')) {
-                const o = document.createElement('option');
-                o.value = p;
-                o.textContent = p || '(auto-detect)';
-                if ((wai.provider ?? '') === p) o.selected = true;
-                provSel.appendChild(o);
-              }
-              provSel.addEventListener('change', () => {
-                wai.provider = provSel.value || null;
+              const smallRow = document.createElement('div');
+              smallRow.className = 'st-field';
+              const smallLabel = document.createElement('label');
+              smallLabel.className = 'st-label';
+              smallLabel.textContent = 'Small model';
+              const smallDesc = document.createElement('span');
+              smallDesc.className = 'st-desc';
+              smallDesc.textContent = 'Optional provider/model for cheap background tasks';
+              smallLabel.appendChild(smallDesc);
+              smallRow.appendChild(smallLabel);
+              const smallInp = document.createElement('input');
+              smallInp.type = 'text';
+              smallInp.className = 'st-input';
+              smallInp.value = wai.small_model ?? '';
+              smallInp.setAttribute('list', listId);
+              smallInp.placeholder = 'anthropic/claude-haiku-4-5';
+              smallInp.addEventListener('change', () => {
+                wai.small_model = smallInp.value.trim() || null;
                 dirty();
               });
-              provRow.appendChild(provSel);
-              el.appendChild(provRow);
-            }
+              smallRow.appendChild(smallInp);
+              el.appendChild(smallRow);
 
-            // ── API key env var (hidden for claude-cli / none) ────────
-            if (needsKey) {
+              const providerRow = document.createElement('div');
+              providerRow.className = 'st-field';
+              const providerLabel = document.createElement('label');
+              providerLabel.className = 'st-label';
+              providerLabel.textContent = 'Provider';
+              const providerDesc = document.createElement('span');
+              providerDesc.className = 'st-desc';
+              providerDesc.textContent = 'provider entry used by this model ID';
+              providerLabel.appendChild(providerDesc);
+              providerRow.appendChild(providerLabel);
+              const providerInp = document.createElement('input');
+              providerInp.type = 'text';
+              providerInp.className = 'st-input';
+              providerInp.value = providerId;
+              providerInp.setAttribute('list', 'st-dl-provider');
+              const providerList = document.createElement('datalist');
+              providerList.id = 'st-dl-provider';
+              for (const p of KNOWN_PROVIDERS) {
+                const o = document.createElement('option');
+                o.value = p;
+                providerList.appendChild(o);
+              }
+              providerInp.addEventListener('change', () => {
+                const nextProviderId = providerInp.value.trim();
+                if (!nextProviderId || nextProviderId === providerId) return;
+                providers[nextProviderId] = providers[providerId] ?? { options: {}, models: {} };
+                delete providers[providerId];
+                wai.model = `${nextProviderId}/${modelKey}`;
+                dirty();
+                rebuild();
+              });
+              providerRow.appendChild(providerInp);
+              providerRow.appendChild(providerList);
+              el.appendChild(providerRow);
+
               const keyRow = document.createElement('div');
               keyRow.className = 'st-field';
               const keyLabel = document.createElement('label');
               keyLabel.className = 'st-label';
-              keyLabel.textContent = 'API key env var';
+              keyLabel.textContent = 'API key';
               const keyDesc = document.createElement('span');
               keyDesc.className = 'st-desc';
-              keyDesc.textContent = 'Environment variable holding your API key (e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY)';
+              keyDesc.textContent = 'Use {env:ANTHROPIC_API_KEY} or {file:~/.config/provider-key}';
               keyLabel.appendChild(keyDesc);
               keyRow.appendChild(keyLabel);
               const keyInp = document.createElement('input');
               keyInp.type = 'text';
               keyInp.className = 'st-input';
-              keyInp.value = wai.api_key_env ?? '';
-              keyInp.placeholder = 'ANTHROPIC_API_KEY';
-              keyInp.addEventListener('input', () => { wai.api_key_env = keyInp.value; dirty(); });
+              keyInp.value = String(providerCfg.options.apiKey ?? '');
+              keyInp.placeholder = providerId === 'openai' ? '{env:OPENAI_API_KEY}' : '{env:ANTHROPIC_API_KEY}';
+              keyInp.addEventListener('input', () => {
+                providerCfg.options.apiKey = keyInp.value.trim();
+                dirty();
+              });
               keyRow.appendChild(keyInp);
               el.appendChild(keyRow);
-            }
 
-            // ── Base URL (hidden for claude-cli / none) ────────────────
-            if (!isNone && !isCli) {
               const urlRow = document.createElement('div');
               urlRow.className = 'st-field';
               const urlLabel = document.createElement('label');
@@ -1087,17 +1168,70 @@ const SECTIONS: Section[] = [
               urlLabel.textContent = 'Base URL';
               const urlDesc = document.createElement('span');
               urlDesc.className = 'st-desc';
-              urlDesc.textContent = 'Override API endpoint — required for Ollama (http://localhost:11434) or OpenAI-compatible servers';
+              urlDesc.textContent = 'OpenAI-compatible providers can use their own endpoint';
               urlLabel.appendChild(urlDesc);
               urlRow.appendChild(urlLabel);
               const urlInp = document.createElement('input');
               urlInp.type = 'text';
               urlInp.className = 'st-input';
-              urlInp.value = wai.base_url ?? '';
-              urlInp.placeholder = 'http://localhost:11434';
-              urlInp.addEventListener('input', () => { wai.base_url = urlInp.value || null; dirty(); });
+              urlInp.value = String(providerCfg.options.baseURL ?? '');
+              urlInp.placeholder = providerId === 'ollama' ? 'http://localhost:11434' : 'https://api.openai.com';
+              urlInp.addEventListener('input', () => {
+                if (urlInp.value.trim()) providerCfg.options.baseURL = urlInp.value.trim();
+                else delete providerCfg.options.baseURL;
+                dirty();
+              });
               urlRow.appendChild(urlInp);
               el.appendChild(urlRow);
+
+              const upstreamRow = document.createElement('div');
+              upstreamRow.className = 'st-field';
+              const upstreamLabel = document.createElement('label');
+              upstreamLabel.className = 'st-label';
+              upstreamLabel.textContent = 'Model alias';
+              const upstreamDesc = document.createElement('span');
+              upstreamDesc.className = 'st-desc';
+              upstreamDesc.textContent = 'Optional upstream id; leave empty to use the model key from provider/model';
+              upstreamLabel.appendChild(upstreamDesc);
+              upstreamRow.appendChild(upstreamLabel);
+              const upstreamInp = document.createElement('input');
+              upstreamInp.type = 'text';
+              upstreamInp.className = 'st-input';
+              upstreamInp.value = modelCfg.id ?? '';
+              upstreamInp.placeholder = modelKey;
+              upstreamInp.addEventListener('input', () => {
+                modelCfg.id = upstreamInp.value.trim() || null;
+                dirty();
+              });
+              upstreamRow.appendChild(upstreamInp);
+              el.appendChild(upstreamRow);
+
+              const optionsRow = document.createElement('div');
+              optionsRow.className = 'st-field';
+              const optionsLabel = document.createElement('label');
+              optionsLabel.className = 'st-label';
+              optionsLabel.textContent = 'Model options';
+              const optionsDesc = document.createElement('span');
+              optionsDesc.className = 'st-desc';
+              optionsDesc.textContent = 'JSON object, for example {"reasoningEffort":"high","maxTokens":2048}';
+              optionsLabel.appendChild(optionsDesc);
+              optionsRow.appendChild(optionsLabel);
+              const optionsInp = document.createElement('textarea');
+              optionsInp.className = 'st-input';
+              optionsInp.rows = 5;
+              optionsInp.value = stringifyJsonObject(modelCfg.options);
+              optionsInp.addEventListener('change', () => {
+                const parsed = parseJsonObject(optionsInp.value);
+                if (!parsed) {
+                  optionsInp.classList.add('error');
+                  return;
+                }
+                optionsInp.classList.remove('error');
+                modelCfg.options = parsed;
+                dirty();
+              });
+              optionsRow.appendChild(optionsInp);
+              el.appendChild(optionsRow);
             }
 
             // ── Test button ────────────────────────────────────────────
@@ -1514,7 +1648,7 @@ export class SettingsPanel {
 
   private async save() {
     try {
-      await invoke('config_save', { cfg: this.cfg });
+      await transport.send('config_save', { cfg: this.cfg });
       this.hasUnsavedPreview = false;
       this.hide();
     } catch (e: any) {

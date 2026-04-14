@@ -1,22 +1,26 @@
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { invoke } from '@tauri-apps/api/core';
 import { sessionManager } from './session/SessionManager';
+import { sessionObserver } from './session/SessionObserver';
 import { configContext } from './config/ConfigContext';
 import { WaterfallArea } from './waterfall/WaterfallArea';
 import { InputBar } from './input/InputBar';
 import { SessionSidebar } from './sidebar/SessionSidebar';
 import { keybindingManager } from './keybindings/KeybindingManager';
 import { modeManager } from './input/ModeManager';
-import { setWaterfallArea } from './ai/ai-handler';
-import { setPlanWaterfallArea, setPlanLogFn } from './ai/plan-executor';
+import { setPlanLogFn } from './ai/plan-executor';
 import { SettingsPanel } from './settings/SettingsPanel';
 import { OnboardingOverlay } from './help/OnboardingOverlay';
+import { transport } from './transport';
+import { workspaceActions } from './workspace/WorkspaceActions';
+import { setWorkspaceLayoutReader } from './workspace/WorkspaceState';
+import type { PaneNameSource } from './session/types';
 
 interface PaneSnapshot {
   name: string;
   group: string;
   note: string;
   cwd: string;
+  name_source?: PaneNameSource;
   row_index: number;
   pane_index: number;
   is_active: boolean;
@@ -38,6 +42,7 @@ export async function initApp(root: HTMLElement) {
   // Init config first
   await configContext.init();
   await sessionManager.init();
+  sessionObserver.init();
 
   // Preload bundled symbol font before any xterm.js terminal is created.
   // xterm.js builds its glyph atlas on first render — if the @font-face font
@@ -77,17 +82,35 @@ export async function initApp(root: HTMLElement) {
   const inputBar = new InputBar(appEl);
 
   // Wire up cross-module references
-  sidebar.setWaterfallArea(waterfallArea);
-  setWaterfallArea(waterfallArea);
-  setPlanWaterfallArea(waterfallArea);
   setPlanLogFn((text, cls) => inputBar.logLine(text, cls));
+  setWorkspaceLayoutReader(waterfallArea);
+  workspaceActions.configure({
+    session: sessionManager,
+    terminal: {
+      write: (paneId, data) => transport.send('pty_write', { args: { pane_id: paneId, data } }),
+    },
+    layout: {
+      spawnPane: async (opts) => {
+        const pane = await waterfallArea.spawnPane(opts);
+        return pane ? { paneId: pane.paneId } : null;
+      },
+      splitCurrentRow: () => waterfallArea.splitCurrentRow(),
+      closePane: async (paneId) => {
+        const pane = waterfallArea.getPane(paneId);
+        if (pane) await pane.destroy();
+      },
+    },
+    viewport: {
+      scrollToPane: (paneId) => waterfallArea.scrollToPane(paneId),
+    },
+  });
 
   // Header buttons
   header.querySelector('#btn-new')?.addEventListener('click', () => {
-    waterfallArea.spawnPane({ newRow: true });
+    void workspaceActions.dispatch({ type: 'new' }, { source: 'ui' });
   });
   header.querySelector('#btn-split')?.addEventListener('click', () => {
-    waterfallArea.splitCurrentRow();
+    void workspaceActions.dispatch({ type: 'split' }, { source: 'ui' });
   });
   header.querySelector('#btn-sessions')?.addEventListener('click', () => {
     sidebar.toggle();
@@ -116,7 +139,7 @@ export async function initApp(root: HTMLElement) {
   // CSS cannot cover native controls; this uses objc FFI to setHidden on each button.
   if (isMac) {
     const applyTrafficLights = (compact: boolean) => {
-      invoke('window_set_traffic_lights_hidden', { hidden: compact }).catch(() => {});
+      transport.send('window_set_traffic_lights_hidden', { hidden: compact }).catch(() => {});
     };
     applyTrafficLights(configContext.get().window.compact_mode);
     configContext.onChange((cfg) => applyTrafficLights(cfg.window.compact_mode));
@@ -144,11 +167,11 @@ export async function initApp(root: HTMLElement) {
   // appWindow.destroy() is used for the final close so it doesn't re-fire
   // onCloseRequested (unlike appWindow.close()).
   appWindow.onCloseRequested(async (event) => {
-    if (!configContext.get().persistence.keep_alive) return;
+    if (!configContext.get().persistence.restore_workspace_on_launch) return;
     event.preventDefault();
     try {
       const snapshot = buildSnapshot(waterfallArea);
-      await invoke('workspace_snapshot_save', { snapshot });
+      await transport.send('workspace_snapshot_save', { snapshot });
     } catch (e) {
       console.error('Failed to save workspace snapshot:', e);
     }
@@ -174,9 +197,9 @@ export async function initApp(root: HTMLElement) {
 
   // ── Persistence: restore snapshot or spawn a fresh pane ─────────────────
   let restored = false;
-  if (configContext.get().persistence.keep_alive) {
+  if (configContext.get().persistence.restore_workspace_on_launch) {
     try {
-      const snapshot = await invoke<WorkspaceSnapshot | null>('workspace_snapshot_load');
+      const snapshot = await transport.send<WorkspaceSnapshot | null>('workspace_snapshot_load');
       console.log('[restore] snapshot loaded:', snapshot);
       if (snapshot && snapshot.panes.length > 0) {
         await restoreSnapshot(snapshot, waterfallArea);
@@ -187,7 +210,7 @@ export async function initApp(root: HTMLElement) {
       console.error('[restore] failed:', e);
     }
   } else {
-    console.log('[restore] skipped: keep_alive=false');
+    console.log('[restore] skipped: restore_workspace_on_launch=false');
   }
   if (!restored) {
     await waterfallArea.spawnPane({ newRow: true });
@@ -229,6 +252,7 @@ function buildSnapshot(waterfallArea: WaterfallArea): WorkspaceSnapshot {
         // Store row note only on first pane in row; other panes leave it empty.
         note: paneIdx === 0 ? rowNote : '',
         cwd: info.cwd,
+        name_source: info.name_source,
         row_index: rowIdx,
         pane_index: paneIdx,
         is_active: info.id === activeId,
@@ -270,7 +294,7 @@ async function restoreSnapshot(snapshot: WorkspaceSnapshot, waterfallArea: Water
 
     // Restore metadata that the PTY spawn doesn't carry.
     const renames: Promise<void>[] = [];
-    if (snap.name) renames.push(sessionManager.renamePane(pane.paneId, snap.name).catch(console.error));
+    if (snap.name) renames.push(sessionManager.renamePane(pane.paneId, snap.name, snap.name_source ?? 'manual').catch(console.error));
     if (snap.group && snap.group !== 'default') {
       renames.push(sessionManager.setPaneGroup(pane.paneId, snap.group).catch(console.error));
     }

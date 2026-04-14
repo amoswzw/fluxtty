@@ -1,37 +1,31 @@
-import { invoke } from '@tauri-apps/api/core';
 import { sessionManager } from '../session/SessionManager';
-import type { WaterfallArea } from '../waterfall/WaterfallArea';
 import { planExecutor } from './plan-executor';
 import { llmClient, type LLMMessage } from './llm-client';
 import { configContext } from '../config/ConfigContext';
-
-// Will be set after WaterfallArea is created
-let waterfallArea: WaterfallArea | null = null;
-
-export function setWaterfallArea(area: WaterfallArea) {
-  waterfallArea = area;
-}
+import { workspaceActions, actionDescription, type WorkspaceAction } from '../workspace/WorkspaceActions';
+import { formatWorkspaceContext } from '../workspace/WorkspaceState';
 
 // ---------------------------------------------------------------------------
 // Workspace context system prompt
 // ---------------------------------------------------------------------------
 
 function buildSystemPrompt(): string {
-  const panes = sessionManager.getAllPanes();
-  const activeId = sessionManager.getActivePaneId();
+  const workspaceContext = formatWorkspaceContext();
 
-  const sessionLines = panes.map(p => {
-    const active = p.id === activeId ? ' ← active' : '';
-    const agent = p.agent_type !== 'none' ? ` (${p.agent_type})` : '';
-    return `  ${p.id}. ${p.name} [${p.group}] ${p.status}${agent}  cwd: ${p.cwd}${active}`;
-  }).join('\n') || '  (no sessions)';
+  const recentLog = workspaceActions.getLog().slice(-5);
+  const recentActions = recentLog.length > 0
+    ? '\nRecent actions:\n' + recentLog
+        .filter(e => e.result != null)
+        .map(e => `  ${e.result!.ok ? '✓' : '✗'} ${actionDescription(e.action)} → ${e.result!.message}`)
+        .join('\n')
+    : '';
 
   return `You are the Workspace AI for FluXTTY, a multi-session developer terminal.
 You help the user accomplish ANY task by running shell commands and managing sessions.
 Use terminal commands freely to get things done — check status, run builds, edit files, whatever is needed.
 
 Current sessions:
-${sessionLines}
+${workspaceContext}${recentActions}
 
 To execute a workspace action, include a fenced action block in your response:
 
@@ -39,25 +33,30 @@ To execute a workspace action, include a fenced action block in your response:
 {"type": "run", "cmd": "npm test", "target": "frontend"}
 \`\`\`
 
-Available action types (★ = requires confirmation, safe to execute immediately otherwise):
-• run        – run any shell command in one session → {"type":"run","cmd":"...","target":"<name or id>"}
-• broadcast  ★ run in ALL sessions                 → {"type":"broadcast","cmd":"..."}
-• run-group  ★ run in all sessions of a group      → {"type":"run-group","cmd":"...","group":"<group>"}
-• new        – create a new session                → {"type":"new","name":"...","group":"..."}
-• rename     – rename a session                    → {"type":"rename","target":"...","name":"..."}
-• close      – close one session                   → {"type":"close","target":"..."} or "idle"
-• close-group★ close all sessions in a group       → {"type":"close-group","group":"<group>"}
-• split      – split current row                   → {"type":"split"}
-• focus      – navigate to a session               → {"type":"focus","target":"<name or id>"}
-• group      – assign session to a group           → {"type":"group","target":"...","group":"<group>"}
-• note       – set a note on a session             → {"type":"note","target":"...","text":"<note>"}
-• clear      – clear terminal output               → {"type":"clear","target":"<name or id>"}
-• kill       – send Ctrl+C to interrupt a process  → {"type":"kill","target":"<name or id>"}
+Available action types (★ = requires confirmation before execution):
+• run        – run a command (fire-and-forget)      → {"type":"run","cmd":"...","target":"<name or id>"}
+• run-await  – run and wait for exit code           → {"type":"run-await","cmd":"...","target":"<name or id>","timeout_ms":30000}
+• read       – read recent output from a session    → {"type":"read","target":"<name or id>"}
+• pipeline  ★ multi-pane coordinated execution      → {"type":"pipeline","label":"...","steps":[{"label":"...","parallel":true,"condition":"prev-success","actions":[{"target":"...","cmd":"..."}]}]}
+• broadcast ★ run in ALL sessions                   → {"type":"broadcast","cmd":"..."}
+• run-group ★ run in all sessions of a group        → {"type":"run-group","cmd":"...","group":"<group>"}
+• new        – create a new session                 → {"type":"new","name":"...","group":"..."}
+• rename     – rename a session                     → {"type":"rename","target":"...","name":"..."}
+• close      – close one session                    → {"type":"close","target":"..."} or "idle"
+• close-group★ close all sessions in a group        → {"type":"close-group","group":"<group>"}
+• split      – split current row                    → {"type":"split"}
+• focus      – navigate to a session                → {"type":"focus","target":"<name or id>"}
+• group      – assign session to a group            → {"type":"group","target":"...","group":"<group>"}
+• note       – set a note on a session              → {"type":"note","target":"...","text":"<note>"}
+• clear      – clear terminal output                → {"type":"clear","target":"<name or id>"}
+• kill       – send Ctrl+C to interrupt a process   → {"type":"kill","target":"<name or id>"}
 
 Rules:
-- ★ actions (broadcast, run-group, close-group) always require user confirmation — list the plan and wait.
-- All other actions execute immediately for a single session.
-- Chain multiple run actions to accomplish complex tasks step by step.
+- Use run-await (not run) when you need the result before the next action.
+- Use pipeline for multi-step cross-session work with dependencies.
+- pipeline step conditions: "prev-success" = only run if all previous actions exited 0.
+- read lets you inspect output before deciding what to do next.
+- ★ actions always require user confirmation.
 - Keep responses short and direct.`;
 }
 
@@ -155,188 +154,45 @@ function parseIntent(input: string): ParsedIntent | null {
 // ---------------------------------------------------------------------------
 
 /** Read-only actions that never touch state — execute immediately, no confirm. */
-const READONLY_TYPES = new Set(['list', 'help', 'set-agent', 'focus']);
+const READONLY_TYPES = new Set(['list', 'help', 'set-agent', 'focus', 'read']);
 
-/**
- * Actions that manage their own multi-step confirmation via planExecutor.setPlan().
- * Calling executeAction() on these returns the plan preview string and registers
- * the pending plan — no extra wrapping needed.
- */
 const SELF_CONFIRM_TYPES = new Set(['broadcast', 'run-group', 'close-group', 'sequential']);
 
-/** Human-readable description of a single state-changing action (for confirm prompt). */
-function actionDescription(action: ParsedAction): string {
-  switch (action.type) {
-    case 'run':    return `run "${action.cmd as string}" in ${action.target as string}`;
-    case 'new':    return `create new session${action.name ? ` "${action.name as string}"` : ''}${action.group ? ` in group "${action.group as string}"` : ''}`;
-    case 'rename': return `rename "${action.target as string}" → "${action.name as string}"`;
-    case 'close':  return (action.target as string).toLowerCase() === 'idle'
-      ? 'close all idle sessions'
-      : `close session "${action.target as string}"`;
-    case 'split':  return 'split current row';
-    case 'group':  return `move "${action.target as string}" to group "${action.group as string}"`;
-    case 'note':   return `set note on "${action.target as string}": ${action.text as string}`;
-    case 'clear':  return `clear terminal output of "${action.target as string}"`;
-    case 'kill':   return `send Ctrl+C to "${action.target as string}"`;
-    default:       return `${action.type} action`;
+function toWorkspaceAction(action: ParsedAction): WorkspaceAction {
+  if (action.type === 'set-agent' && typeof action.target !== 'string') {
+    const activeId = sessionManager.getActivePaneId();
+    return {
+      type: 'set-agent',
+      target: activeId == null ? '' : String(activeId),
+      agentType: action.agentType as never,
+    };
   }
+  return action as WorkspaceAction;
 }
-
-// ---------------------------------------------------------------------------
-// Pane lookup
-// ---------------------------------------------------------------------------
-
-function findPane(target: string) {
-  const panes = sessionManager.getAllPanes();
-  const t = target.toLowerCase();
-  return panes.find(p =>
-    p.name.toLowerCase() === t ||
-    p.id === parseInt(t)
-  ) || panes.find(p =>
-    p.name.toLowerCase().includes(t)
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Shared action executor (used by both LLM and regex paths)
-// ---------------------------------------------------------------------------
 
 async function executeAction(action: ParsedAction): Promise<string> {
-  switch (action.type) {
-    case 'run': {
-      const pane = findPane(action.target as string);
-      if (!pane) return `Session "${action.target}" not found.`;
-      const tp = waterfallArea?.getPane(pane.id);
-      if (!tp) return `Pane "${action.target}" not available.`;
-      await tp.writeCommand(action.cmd as string);
-      waterfallArea?.scrollToPane(pane.id);
-      return `Ran "${action.cmd}" in ${pane.name}`;
-    }
+  const result = await workspaceActions.dispatch(toWorkspaceAction(action), { source: 'ai' });
+  return result.message;
+}
 
-    case 'broadcast': {
-      const panes = sessionManager.getAllPanes();
-      const plan = panes.map(p => ({ paneId: p.id, cmd: action.cmd as string, paneName: p.name }));
-      planExecutor.setPlan(plan, `Run "${action.cmd}" in all ${panes.length} sessions`);
-      return planExecutor.getPlanPreview();
-    }
-
-    case 'sequential': {
-      const pane = findPane(action.target as string);
-      if (!pane) return `Session "${action.target}" not found.`;
-      const cmds = action.cmds as string[];
-      const plan = cmds.map(cmd => ({ paneId: pane.id, cmd, paneName: pane.name }));
-      planExecutor.setPlan(plan, `Run ${cmds.length} commands in ${pane.name}`);
-      return planExecutor.getPlanPreview();
-    }
-
-    case 'new': {
-      if (!waterfallArea) return 'Waterfall not ready.';
-      const pane = await waterfallArea.spawnPane({ newRow: true, group: (action.group as string) || 'default' });
-      if (pane && action.name) {
-        await sessionManager.renamePane(pane.paneId, action.name as string);
-      }
-      return pane
-        ? `Created new session${action.name ? ` "${action.name}"` : ''}`
-        : 'Failed to create session.';
-    }
-
-    case 'rename': {
-      const pane = findPane(action.target as string);
-      if (!pane) return `Session "${action.target}" not found.`;
-      await sessionManager.renamePane(pane.id, action.name as string);
-      return `Renamed ${pane.name} → ${action.name}`;
-    }
-
-    case 'close': {
-      const target = (action.target as string).toLowerCase();
-      if (target === 'idle') {
-        const idle = sessionManager.getAllPanes().filter(p => p.status === 'idle');
-        for (const p of idle) {
-          const tp = waterfallArea?.getPane(p.id);
-          if (tp) await tp.destroy();
-        }
-        return `Closed ${idle.length} idle session(s).`;
-      }
-      const pane = findPane(action.target as string);
-      if (!pane) return `Session "${action.target}" not found.`;
-      const tp = waterfallArea?.getPane(pane.id);
-      if (tp) {
-        await tp.destroy();
-        return `Closed ${pane.name}.`;
-      }
-      return 'Pane not available.';
-    }
-
-    case 'split': {
-      if (!waterfallArea) return 'Waterfall not ready.';
-      waterfallArea.splitCurrentRow();
-      return 'Split current row.';
-    }
-
-    case 'focus': {
-      const pane = findPane(action.target as string);
-      if (!pane) return `Session "${action.target}" not found.`;
-      sessionManager.setActivePane(pane.id);
-      waterfallArea?.scrollToPane(pane.id);
-      return `Focused ${pane.name}.`;
-    }
-
-    case 'group': {
-      const pane = findPane(action.target as string);
-      if (!pane) return `Session "${action.target}" not found.`;
-      await sessionManager.setPaneGroup(pane.id, action.group as string);
-      return `Moved ${pane.name} to group "${action.group}".`;
-    }
-
-    case 'note': {
-      const pane = findPane(action.target as string);
-      if (!pane) return `Session "${action.target}" not found.`;
-      await sessionManager.setPaneNote(pane.id, action.text as string);
-      return `Set note on ${pane.name}.`;
-    }
-
-    case 'clear': {
-      const pane = findPane(action.target as string);
-      if (!pane) return `Session "${action.target}" not found.`;
-      await invoke('pty_write', { args: { pane_id: pane.id, data: 'clear\r' } });
-      return `Cleared ${pane.name}.`;
-    }
-
-    case 'kill': {
-      const pane = findPane(action.target as string);
-      if (!pane) return `Session "${action.target}" not found.`;
-      await invoke('pty_write', { args: { pane_id: pane.id, data: '\x03' } });
-      return `Sent Ctrl+C to ${pane.name}.`;
-    }
-
-    case 'run-group': {
-      const group = (action.group as string).toLowerCase();
-      const groupPanes = sessionManager.getAllPanes().filter(p => p.group.toLowerCase() === group);
-      if (groupPanes.length === 0) return `No sessions in group "${action.group}".`;
-      const plan = groupPanes.map(p => ({ paneId: p.id, cmd: action.cmd as string, paneName: p.name }));
-      planExecutor.setPlan(plan, `Run "${action.cmd}" in group "${action.group}" (${groupPanes.length} sessions)`);
-      return planExecutor.getPlanPreview();
-    }
-
-    case 'close-group': {
-      const group = (action.group as string).toLowerCase();
-      const groupPanes = sessionManager.getAllPanes().filter(p => p.group.toLowerCase() === group);
-      if (groupPanes.length === 0) return `No sessions in group "${action.group}".`;
-      const plan = groupPanes.map(p => ({ paneId: p.id, cmd: '__close__', paneName: p.name }));
-      planExecutor.setPlan(plan, `Close all ${groupPanes.length} sessions in group "${action.group}"`);
-      return planExecutor.getPlanPreview();
-    }
-
-    default:
-      return `Unknown action type: ${action.type}`;
-  }
+function describeAction(action: ParsedAction): string {
+  return actionDescription(toWorkspaceAction(action));
 }
 
 // ---------------------------------------------------------------------------
 // Main AI handler
 // ---------------------------------------------------------------------------
 
+const MAX_HISTORY_TURNS = 10;
+
 class AIHandler {
+  private conversationHistory: LLMMessage[] = [];
+
+  /** Clear the conversation history (e.g. on :clear or new session). */
+  resetHistory(): void {
+    this.conversationHistory = [];
+  }
+
   async handle(input: string): Promise<string> {
     const cfg = configContext.get();
     const model = cfg.workspace_ai.model;
@@ -346,9 +202,18 @@ class AIHandler {
       try {
         const messages: LLMMessage[] = [
           { role: 'system', content: buildSystemPrompt() },
+          ...this.conversationHistory,
           { role: 'user', content: input },
         ];
         const raw = await llmClient.complete(messages, cfg);
+
+        // Update sliding conversation window
+        this.conversationHistory.push({ role: 'user', content: input });
+        this.conversationHistory.push({ role: 'assistant', content: raw });
+        if (this.conversationHistory.length > MAX_HISTORY_TURNS * 2) {
+          this.conversationHistory.splice(0, 2);
+        }
+
         const { actions, cleanText } = extractActions(raw);
 
         if (actions.length === 0) {
@@ -378,48 +243,23 @@ class AIHandler {
         if (changingActions.length === 1) {
           // Single state-changing action — show confirm prompt
           const a = changingActions[0];
-          const desc = actionDescription(a);
-          planExecutor.setPending(desc, () => executeAction(a));
+          const desc = describeAction(a);
+          planExecutor.setPending(desc, () => executeAction(a), [toWorkspaceAction(a)]);
           const preview = (cleanText ? cleanText + '\n\n' : '') + planExecutor.getPlanPreview();
           return preview;
         }
 
-        // Multiple state-changing actions — build a unified plan for run/close,
-        // execute self-confirm types inline, execute readonly immediately.
-        const planSteps = changingActions
-          .filter(a => !SELF_CONFIRM_TYPES.has(a.type))
-          .flatMap(a => {
-            if (a.type === 'run') {
-              const pane = findPane(a.target as string);
-              return pane ? [{ paneId: pane.id, cmd: a.cmd as string, paneName: pane.name }] : [];
-            }
-            if (a.type === 'close') {
-              const pane = findPane(a.target as string);
-              return pane ? [{ paneId: pane.id, cmd: '__close__', paneName: pane.name }] : [];
-            }
-            // Other actions (new/rename/etc.) are described inline in the plan title
-            return [];
-          });
-        const nonPlanActions = changingActions.filter(
-          a => !SELF_CONFIRM_TYPES.has(a.type) && a.type !== 'run' && a.type !== 'close'
-        );
-        const descriptions = [
-          ...nonPlanActions.map(a => actionDescription(a)),
-          ...planSteps.map(s => `${s.paneName} ❯ ${s.cmd === '__close__' ? '[close]' : s.cmd}`),
-        ];
+        // Multiple state-changing actions share the same confirmation queue.
+        const descriptions = changingActions.map(a => describeAction(a));
+        const queuedActions = changingActions.map(a => toWorkspaceAction(a));
         planExecutor.setPending(
           descriptions.join('\n'),
           async () => {
-            for (const a of nonPlanActions) await executeAction(a);
-            for (const s of planSteps) {
-              const tp = waterfallArea?.getPane(s.paneId);
-              if (tp) {
-                if (s.cmd === '__close__') await tp.destroy();
-                else await tp.writeCommand(s.cmd);
-              }
-            }
-            return 'Done.';
-          }
+            const messages: string[] = [];
+            for (const a of changingActions) messages.push(await executeAction(a));
+            return messages.join('\n');
+          },
+          queuedActions,
         );
         return (cleanText ? cleanText + '\n\n' : '') + planExecutor.getPlanPreview();
 
@@ -447,8 +287,11 @@ class AIHandler {
       case 'set-agent': {
         const activeId = sessionManager.getActivePaneId();
         if (activeId == null) return 'No active session.';
-        await sessionManager.setPaneAgent(activeId, intent.agentType as never);
-        return `Set active session agent to "${intent.agentType}".`;
+        return executeAction({
+          type: 'set-agent',
+          target: String(activeId),
+          agentType: intent.agentType,
+        });
       }
 
       case 'focus':
@@ -474,7 +317,7 @@ class AIHandler {
           '  list | status                   – list all sessions',
           '  !agent <claude|codex|aider|none>',
           '',
-          'Set workspace_ai.model in config to enable natural language (Claude, GPT, Gemini, Ollama…)',
+          'Set workspace_ai.model to an OpenCode-style provider/model id, for example anthropic/claude-sonnet-4-5.',
         ].join('\n');
 
       // ── State-changing: self-managing confirmation ─────────────────
@@ -487,8 +330,8 @@ class AIHandler {
       // ── State-changing: single action — route through confirm ──────
       default: {
         const action = intent as ParsedAction;
-        const desc = actionDescription(action);
-        planExecutor.setPending(desc, () => executeAction(action));
+        const desc = describeAction(action);
+        planExecutor.setPending(desc, () => executeAction(action), [toWorkspaceAction(action)]);
         return planExecutor.getPlanPreview();
       }
     }
