@@ -65,7 +65,7 @@ function makePorts(panes: PaneInfo[]): WorkspaceActionPorts {
   return {
     session: {
       getAllPanes: () => panes,
-      getPane: (id) => panes.find(p => p.id === id),
+      getPane: (id: number) => panes.find(p => p.id === id),
       getActivePaneId: () => null,
       getActivePane: () => undefined,
       setActivePane: vi.fn().mockResolvedValue(undefined),
