@@ -60,15 +60,19 @@ export function serializeWorkspaceState(): SerializedWorkspaceState {
 
 export function formatWorkspaceContext(state: SerializedWorkspaceState = serializeWorkspaceState()): string {
   const lines = state.panes.map(pane => {
-    const active = pane.id === state.active_pane_id ? ' <- active' : '';
+    const active = pane.id === state.active_pane_id ? ' <- ACTIVE' : '';
     const agent = pane.agent_type !== 'none' ? ` (${pane.agent_type})` : '';
     const source = pane.name_source === 'auto' ? 'auto-name' : 'manual-name';
-    const altScreen = pane.alternate_screen ? ' [alt-screen]' : '';
-    const lastCmd = pane.last_command ? ` last: ${pane.last_command}` : '';
+    // Alt-screen: TUI app is running — shell commands won't work until it exits
+    const altScreen = pane.alternate_screen ? ' [TUI:no-shell]' : '';
+    const statusLabel = pane.status === 'running' ? ' [RUNNING]' : '';
+    const lastCmd = pane.last_command ? ` last:"${pane.last_command}"` : '';
     const exitCode = pane.last_exit_code != null
-      ? ` exit:${pane.last_exit_code}`
+      ? pane.last_exit_code !== 0
+        ? ` exit:${pane.last_exit_code}⚠`
+        : ` exit:0`
       : '';
-    return `  ${pane.id}. ${pane.name} [${pane.group}] ${pane.status}${agent} ${source} cwd: ${pane.cwd}${altScreen}${lastCmd}${exitCode}${active}`;
+    return `  ${pane.id}. ${pane.name} [${pane.group}]${statusLabel} ${source} cwd:${pane.cwd}${agent}${altScreen}${lastCmd}${exitCode}${active}`;
   });
 
   if (lines.length === 0) return '  (no sessions)';

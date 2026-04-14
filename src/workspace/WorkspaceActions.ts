@@ -1,8 +1,35 @@
 import { planExecutor } from '../ai/plan-executor';
+import { getPaneContext } from './WorkspaceState';
+import { waitForCommandComplete } from './waitForCommand';
 import type { PaneInfo, AgentType, SessionStatus } from '../session/types';
+
+/** A single action within a pipeline step. */
+export interface PipelineStepAction {
+  target: string;
+  cmd: string;
+  timeout_ms?: number;
+}
+
+/**
+ * One step in a pipeline. All actions within a step run in parallel by default
+ * (parallel: false runs them sequentially). The optional condition gates entry:
+ *
+ *   'always'        – always run this step (default)
+ *   'prev-success'  – only run if every action in the previous step exited 0
+ *   'prev-fail'     – only run if any action in the previous step exited non-0
+ */
+export interface PipelineStep {
+  label?: string;
+  parallel?: boolean;
+  condition?: 'always' | 'prev-success' | 'prev-fail';
+  actions: PipelineStepAction[];
+}
 
 export type WorkspaceAction =
   | { type: 'run'; target: string; cmd: string }
+  | { type: 'run-await'; target: string; cmd: string; timeout_ms?: number }
+  | { type: 'read'; target: string }
+  | { type: 'pipeline'; label?: string; steps: PipelineStep[] }
   | { type: 'broadcast'; cmd: string }
   | { type: 'run-group'; group: string; cmd: string }
   | { type: 'sequential'; target: string; cmds: string[] }
@@ -112,6 +139,21 @@ class WorkspaceActions {
     switch (action.type) {
       case 'run':
         return `run "${action.cmd}" in ${action.target}`;
+      case 'run-await':
+        return `run "${action.cmd}" in ${action.target} (await completion)`;
+      case 'read':
+        return `read output from "${action.target}"`;
+      case 'pipeline': {
+        const stepList = action.steps
+          .map((s, i) => {
+            const acts = s.actions.map(a => `${a.target}: ${a.cmd}`).join(', ');
+            const cond = s.condition && s.condition !== 'always' ? ` [if ${s.condition}]` : '';
+            const par = s.parallel === false ? ' [sequential]' : '';
+            return `  ${i + 1}. ${s.label ? `${s.label}: ` : ''}${acts}${cond}${par}`;
+          })
+          .join('\n');
+        return `${action.label ?? 'Pipeline'} (${action.steps.length} steps):\n${stepList}`;
+      }
       case 'broadcast':
         return `run "${action.cmd}" in all sessions`;
       case 'run-group':
@@ -258,6 +300,76 @@ class WorkspaceActions {
         await ports.terminal.write(pane.id, `${action.cmd}\r`);
         ports.viewport.scrollToPane(pane.id);
         return this.ok(action, `Ran "${action.cmd}" in ${pane.name}.`);
+      }
+
+      case 'run-await': {
+        const pane = this.findPane(action.target);
+        if (!pane) return this.fail(action, `Session "${action.target}" not found.`);
+        await ports.terminal.write(pane.id, `${action.cmd}\r`);
+        ports.viewport.scrollToPane(pane.id);
+        try {
+          const result = await waitForCommandComplete(pane.id, action.timeout_ms ?? 60_000);
+          const ok = result.exitCode === 0;
+          return {
+            ok,
+            message: `${pane.name}: exit ${result.exitCode}`,
+            action,
+            ...(ok ? {} : { error: `Command exited with code ${result.exitCode}` }),
+          };
+        } catch (err) {
+          return this.fail(action, err instanceof Error ? err.message : 'Timeout');
+        }
+      }
+
+      case 'read': {
+        const pane = this.findPane(action.target);
+        if (!pane) return this.fail(action, `Session "${action.target}" not found.`);
+        const ctx = await getPaneContext(pane.id);
+        if (!ctx) return this.fail(action, `Could not read context for "${pane.name}".`);
+        const lines = ctx.recent_output.join('\n');
+        const exitInfo = pane.last_exit_code != null ? `\nExit code: ${pane.last_exit_code}` : '';
+        const lastCmd = pane.last_command ? `\nLast command: ${pane.last_command}` : '';
+        return this.ok(action, `${pane.name}:${lastCmd}${exitInfo}\n${lines}`);
+      }
+
+      case 'pipeline': {
+        const stepSummaries: string[] = [];
+        let prevResults: WorkspaceActionResult[] = [];
+
+        for (const step of action.steps) {
+          if (prevResults.length > 0) {
+            if (step.condition === 'prev-success' && prevResults.some(r => !r.ok)) {
+              stepSummaries.push(`Stopped before "${step.label ?? 'next step'}" — previous step failed`);
+              break;
+            }
+            if (step.condition === 'prev-fail' && prevResults.every(r => r.ok)) {
+              stepSummaries.push(`Skipped "${step.label ?? 'next step'}" — previous step succeeded`);
+              break;
+            }
+          }
+
+          const stepActions = step.actions.map(a => ({
+            type: 'run-await' as const,
+            target: a.target,
+            cmd: a.cmd,
+            timeout_ms: a.timeout_ms,
+          }));
+
+          const stepResults: WorkspaceActionResult[] = [];
+          if (step.parallel !== false) {
+            stepResults.push(...await Promise.all(stepActions.map(a => this.execute(a, _source))));
+          } else {
+            for (const a of stepActions) {
+              stepResults.push(await this.execute(a, _source));
+            }
+          }
+          prevResults = stepResults;
+
+          const stepMsg = stepResults.map(r => r.message).join(', ');
+          stepSummaries.push(step.label ? `${step.label}: ${stepMsg}` : stepMsg);
+        }
+
+        return this.ok(action, stepSummaries.join('\n') || 'Pipeline complete.');
       }
 
       case 'new': {

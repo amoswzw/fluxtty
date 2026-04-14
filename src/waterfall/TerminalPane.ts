@@ -260,7 +260,8 @@ export class TerminalPane {
               data.includes('\x1b[?47l');
             if (entersAltScreen && modeManager.isInShellMode()) {
               modeManager.enterTerminal(this.paneId);
-            } else if (leavesAltScreen && modeManager.isInPaneMode()) {
+            }
+            if (leavesAltScreen && modeManager.isInPaneMode()) {
               modeManager.enterInsert();
             }
           }

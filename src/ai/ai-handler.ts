@@ -12,12 +12,20 @@ import { formatWorkspaceContext } from '../workspace/WorkspaceState';
 function buildSystemPrompt(): string {
   const workspaceContext = formatWorkspaceContext();
 
+  const recentLog = workspaceActions.getLog().slice(-5);
+  const recentActions = recentLog.length > 0
+    ? '\nRecent actions:\n' + recentLog
+        .filter(e => e.result != null)
+        .map(e => `  ${e.result!.ok ? '✓' : '✗'} ${actionDescription(e.action)} → ${e.result!.message}`)
+        .join('\n')
+    : '';
+
   return `You are the Workspace AI for FluXTTY, a multi-session developer terminal.
 You help the user accomplish ANY task by running shell commands and managing sessions.
 Use terminal commands freely to get things done — check status, run builds, edit files, whatever is needed.
 
 Current sessions:
-${workspaceContext}
+${workspaceContext}${recentActions}
 
 To execute a workspace action, include a fenced action block in your response:
 
@@ -25,25 +33,30 @@ To execute a workspace action, include a fenced action block in your response:
 {"type": "run", "cmd": "npm test", "target": "frontend"}
 \`\`\`
 
-Available action types (★ = requires confirmation, safe to execute immediately otherwise):
-• run        – run any shell command in one session → {"type":"run","cmd":"...","target":"<name or id>"}
-• broadcast  ★ run in ALL sessions                 → {"type":"broadcast","cmd":"..."}
-• run-group  ★ run in all sessions of a group      → {"type":"run-group","cmd":"...","group":"<group>"}
-• new        – create a new session                → {"type":"new","name":"...","group":"..."}
-• rename     – rename a session                    → {"type":"rename","target":"...","name":"..."}
-• close      – close one session                   → {"type":"close","target":"..."} or "idle"
-• close-group★ close all sessions in a group       → {"type":"close-group","group":"<group>"}
-• split      – split current row                   → {"type":"split"}
-• focus      – navigate to a session               → {"type":"focus","target":"<name or id>"}
-• group      – assign session to a group           → {"type":"group","target":"...","group":"<group>"}
-• note       – set a note on a session             → {"type":"note","target":"...","text":"<note>"}
-• clear      – clear terminal output               → {"type":"clear","target":"<name or id>"}
-• kill       – send Ctrl+C to interrupt a process  → {"type":"kill","target":"<name or id>"}
+Available action types (★ = requires confirmation before execution):
+• run        – run a command (fire-and-forget)      → {"type":"run","cmd":"...","target":"<name or id>"}
+• run-await  – run and wait for exit code           → {"type":"run-await","cmd":"...","target":"<name or id>","timeout_ms":30000}
+• read       – read recent output from a session    → {"type":"read","target":"<name or id>"}
+• pipeline  ★ multi-pane coordinated execution      → {"type":"pipeline","label":"...","steps":[{"label":"...","parallel":true,"condition":"prev-success","actions":[{"target":"...","cmd":"..."}]}]}
+• broadcast ★ run in ALL sessions                   → {"type":"broadcast","cmd":"..."}
+• run-group ★ run in all sessions of a group        → {"type":"run-group","cmd":"...","group":"<group>"}
+• new        – create a new session                 → {"type":"new","name":"...","group":"..."}
+• rename     – rename a session                     → {"type":"rename","target":"...","name":"..."}
+• close      – close one session                    → {"type":"close","target":"..."} or "idle"
+• close-group★ close all sessions in a group        → {"type":"close-group","group":"<group>"}
+• split      – split current row                    → {"type":"split"}
+• focus      – navigate to a session                → {"type":"focus","target":"<name or id>"}
+• group      – assign session to a group            → {"type":"group","target":"...","group":"<group>"}
+• note       – set a note on a session              → {"type":"note","target":"...","text":"<note>"}
+• clear      – clear terminal output                → {"type":"clear","target":"<name or id>"}
+• kill       – send Ctrl+C to interrupt a process   → {"type":"kill","target":"<name or id>"}
 
 Rules:
-- ★ actions (broadcast, run-group, close-group) always require user confirmation — list the plan and wait.
-- All other actions execute immediately for a single session.
-- Chain multiple run actions to accomplish complex tasks step by step.
+- Use run-await (not run) when you need the result before the next action.
+- Use pipeline for multi-step cross-session work with dependencies.
+- pipeline step conditions: "prev-success" = only run if all previous actions exited 0.
+- read lets you inspect output before deciding what to do next.
+- ★ actions always require user confirmation.
 - Keep responses short and direct.`;
 }
 
@@ -141,7 +154,7 @@ function parseIntent(input: string): ParsedIntent | null {
 // ---------------------------------------------------------------------------
 
 /** Read-only actions that never touch state — execute immediately, no confirm. */
-const READONLY_TYPES = new Set(['list', 'help', 'set-agent', 'focus']);
+const READONLY_TYPES = new Set(['list', 'help', 'set-agent', 'focus', 'read']);
 
 const SELF_CONFIRM_TYPES = new Set(['broadcast', 'run-group', 'close-group', 'sequential']);
 
@@ -170,7 +183,16 @@ function describeAction(action: ParsedAction): string {
 // Main AI handler
 // ---------------------------------------------------------------------------
 
+const MAX_HISTORY_TURNS = 10;
+
 class AIHandler {
+  private conversationHistory: LLMMessage[] = [];
+
+  /** Clear the conversation history (e.g. on :clear or new session). */
+  resetHistory(): void {
+    this.conversationHistory = [];
+  }
+
   async handle(input: string): Promise<string> {
     const cfg = configContext.get();
     const model = cfg.workspace_ai.model;
@@ -180,9 +202,18 @@ class AIHandler {
       try {
         const messages: LLMMessage[] = [
           { role: 'system', content: buildSystemPrompt() },
+          ...this.conversationHistory,
           { role: 'user', content: input },
         ];
         const raw = await llmClient.complete(messages, cfg);
+
+        // Update sliding conversation window
+        this.conversationHistory.push({ role: 'user', content: input });
+        this.conversationHistory.push({ role: 'assistant', content: raw });
+        if (this.conversationHistory.length > MAX_HISTORY_TURNS * 2) {
+          this.conversationHistory.splice(0, 2);
+        }
+
         const { actions, cleanText } = extractActions(raw);
 
         if (actions.length === 0) {

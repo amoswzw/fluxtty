@@ -496,6 +496,8 @@ impl PtyManager {
                                         }
                                         Osc133Event::CommandDone { exit_code } => {
                                             session.set_pane_command_done(pane_id, exit_code);
+                                            let _ = app.emit("pane:command_complete",
+                                                serde_json::json!({ "pane_id": pane_id, "exit_code": exit_code }));
                                         }
                                         _ => {}
                                     }

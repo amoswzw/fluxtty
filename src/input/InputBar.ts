@@ -253,15 +253,22 @@ export class InputBar {
     const active = document.activeElement;
     const target = e.target instanceof Element ? e.target : null;
     const focusInTextEditor = isEditableElement(active) || isEditableElement(target);
-    if (mode.type === 'normal' && active !== this.inputEl && !focusInTextEditor && !this.paneSelector.isOpen()) {
-      // Meta-modified keys are global app shortcuts (Quit, Settings, ClosePane…)
-      // handled by KeybindingManager. Don't intercept them here — KeybindingManager
-      // runs its own document capture listener AFTER this window listener, and it
-      // checks e.defaultPrevented. If we call handleKeyDown first it calls
-      // e.preventDefault() and KeybindingManager silently skips the shortcut.
-      if (e.metaKey) return;
-      this.inputEl.focus();
-      this.handleKeyDown(e);
+    if (active !== this.inputEl && !focusInTextEditor && !this.paneSelector.isOpen()) {
+      if (mode.type === 'normal') {
+        // Meta-modified keys are global app shortcuts (Quit, Settings, ClosePane…)
+        // handled by KeybindingManager. Don't intercept them here — KeybindingManager
+        // runs its own document capture listener AFTER this window listener, and it
+        // checks e.defaultPrevented. If we call handleKeyDown first it calls
+        // e.preventDefault() and KeybindingManager silently skips the shortcut.
+        if (e.metaKey) return;
+        this.inputEl.focus();
+        this.handleKeyDown(e);
+      } else if (mode.type === 'insert') {
+        // Focus was stolen (e.g. clicking a close button). Re-anchor to inputEl
+        // and forward the keystroke so nothing is lost.
+        this.inputEl.focus();
+        this.handleKeyDown(e);
+      }
     }
   }
 
@@ -648,7 +655,7 @@ export class InputBar {
 
   private async submitToShell() {
     const text = this.inputEl.value;
-    if (!text.trim() && text === '') {
+    if (!text.trim()) {
       // Empty Enter still sends newline (e.g. confirms prompts in shell/claude)
       const activeId = sessionManager.getActivePaneId();
       if (activeId == null) return;
