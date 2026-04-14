@@ -17,6 +17,8 @@ export type AgentType =
 
 export type PaneNameSource = 'auto' | 'manual';
 
+export type PaneNameSource = 'auto' | 'manual';
+
 export interface PaneInfo {
   id: number;
   name: string;
