@@ -39,6 +39,12 @@ export class ModeManager {
   }
   enterAI()     { this.set({ type: 'ai' }); }
 
+  enterView(paneId?: number) {
+    const id = paneId ?? sessionManager.getActivePaneId();
+    if (id == null) return;
+    this.set({ type: 'view', paneId: id });
+  }
+
   enterTerminal(paneId?: number) {
     const id = paneId ?? sessionManager.getActivePaneId();
     if (id == null) return;

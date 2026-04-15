@@ -47,6 +47,7 @@ export interface WorkspaceLayout {
 
 export type InputMode =
   | { type: 'normal' }                      // default: vi normal — navigation + inline command via :
+  | { type: 'view'; paneId: number }        // v: show only the active row (i → insert, click → terminal, Esc → normal)
   | { type: 'ai' }                          // a: free-form chat with Workspace AI
   | { type: 'insert' }                      // i: line editor → active pane PTY (agent-aware)
   | { type: 'terminal'; paneId: number }    // Ctrl+\: xterm owns raw keyboard

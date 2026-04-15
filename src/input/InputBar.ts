@@ -138,6 +138,7 @@ export class InputBar {
     const mode = modeManager.getMode();
     if (mode.type === 'insert') this.refreshInsertPrompt();
     else if (mode.type === 'terminal') this.updateMode(mode);
+    else if (mode.type === 'view') this.updateMode(mode);
   }
 
   private buildDOM() {
@@ -266,7 +267,7 @@ export class InputBar {
     const target = e.target instanceof Element ? e.target : null;
     const focusInTextEditor = isEditableElement(active) || isEditableElement(target);
     if (active !== this.inputEl && !focusInTextEditor && !this.paneSelector.isOpen()) {
-      if (mode.type === 'normal') {
+      if (mode.type === 'normal' || mode.type === 'view') {
         // Meta-modified keys are global app shortcuts (Quit, Settings, ClosePane…)
         // handled by KeybindingManager. Don't intercept them here — KeybindingManager
         // runs its own document capture listener AFTER this window listener, and it
@@ -350,6 +351,7 @@ export class InputBar {
       e.preventDefault(); // block character input
 
       if (e.key === 'i') { this.clearNormalGg(); if (sessionManager.getActivePaneId() != null) modeManager.enterInsert(); return; }
+      if (e.key === 'v') { this.clearNormalGg(); modeManager.enterView(); return; }
       if (e.key === 'a') { this.clearNormalGg(); modeManager.enterAI();     return; }
       if (e.key === ':')    { this.clearNormalGg(); this.enterNormalCommand(); return; }
       if (e.key === '/')    { this.clearNormalGg(); this.inputEl.value = ''; modeManager.enterPaneSelector(); return; }
@@ -363,17 +365,7 @@ export class InputBar {
         if (e.key === 'w') { this.dispatchWorkspaceAction('FocusNextPane'); return; }
         if (e.key === 'W') { this.dispatchWorkspaceAction('FocusPrevPane'); return; }
         if (e.key === 'G') { this.dispatchViScroll('bottom'); return; }
-        if (e.key === 'g') {
-          if (this.normalGgPending) {
-            clearTimeout(this.normalGgTimer!);
-            this.normalGgPending = false;
-            this.dispatchViScroll('top');
-          } else {
-            this.normalGgPending = true;
-            this.normalGgTimer = setTimeout(() => { this.normalGgPending = false; }, 500);
-          }
-          return;
-        }
+        if (e.key === 'g') { this.handleGgKey(); return; }
         if (e.key === 'n') { this.noteNormalShortcut('n'); this.dispatchWorkspaceAction('NewTerminal');          return; }
         if (e.key === 's') { this.noteNormalShortcut('s'); this.dispatchWorkspaceAction('SplitHorizontal');      return; }
         if (e.key === 'q') { this.noteNormalShortcut('q'); this.dispatchWorkspaceAction('ClosePane');            return; }
@@ -389,6 +381,29 @@ export class InputBar {
         if (e.key === 'b') { this.dispatchViScroll('pageUp');   return; }
       }
 
+      return;
+    }
+
+    // ── View mode (active row only — watching state) ─────────────────
+    if (mode.type === 'view') {
+      e.preventDefault();
+      if (e.key === 'Escape' || e.key === 'v') { modeManager.enterNormal(); return; }
+      if (e.key === 'i')  { modeManager.enterInsert(); return; }
+      if (e.ctrlKey && (e.code === 'Backslash' || e.key === '\\' || e.key === '|')) { modeManager.enterTerminal(mode.paneId); return; }
+
+      // vi-style scrolling — same as Normal mode
+      if (!e.ctrlKey && !e.altKey) {
+        if (e.key === 'G') { this.dispatchViScroll('bottom'); return; }
+        if (e.key === 'g') { this.handleGgKey(); return; }
+        if (e.key === 'j' || e.key === 'ArrowDown') { this.dispatchViScroll('lineDown'); return; }
+        if (e.key === 'k' || e.key === 'ArrowUp')   { this.dispatchViScroll('lineUp');   return; }
+      }
+      if (e.ctrlKey) {
+        if (e.key === 'd') { this.dispatchViScroll('halfDown'); return; }
+        if (e.key === 'u') { this.dispatchViScroll('halfUp');   return; }
+        if (e.key === 'f') { this.dispatchViScroll('pageDown'); return; }
+        if (e.key === 'b') { this.dispatchViScroll('pageUp');   return; }
+      }
       return;
     }
 
@@ -603,6 +618,17 @@ export class InputBar {
 
   private dispatchViScroll(cmd: string) {
     document.dispatchEvent(new CustomEvent('normal-vi-scroll', { detail: { cmd } }));
+  }
+
+  private handleGgKey() {
+    if (this.normalGgPending) {
+      clearTimeout(this.normalGgTimer!);
+      this.normalGgPending = false;
+      this.dispatchViScroll('top');
+    } else {
+      this.normalGgPending = true;
+      this.normalGgTimer = setTimeout(() => { this.normalGgPending = false; }, 500);
+    }
   }
 
   private notifyInsertCommandSubmitted(text: string, paneId: number) {
@@ -909,7 +935,7 @@ export class InputBar {
         this.modeIndicatorEl.textContent = 'NORMAL';
         this.modeIndicatorEl.className = 'mode-indicator mode-normal';
         this.inputEl.placeholder = pane
-          ? `${name}  ·  i: insert  a: AI  /: find  m: note  hjkl: nav`
+          ? `${name}  ·  i: insert  v: view  a: AI  /: find  m: note  hjkl: nav`
           : 'n: new terminal  a: AI';
         this.inputEl.readOnly = true;
         this.inputEl.focus();
@@ -934,6 +960,16 @@ export class InputBar {
           this.resetLiveTypingMirror();
         }
         this.refreshInsertPrompt();
+        this.inputEl.focus();
+        break;
+      }
+      case 'view': {
+        const pane = sessionManager.getPane(mode.paneId);
+        this.promptEl.textContent = `[${pane?.name ?? '?'}]`;
+        this.modeIndicatorEl.textContent = 'VIEW';
+        this.modeIndicatorEl.className = 'mode-indicator mode-view';
+        this.inputEl.placeholder = 'i: insert  Ctrl+\\: terminal  v/Esc: exit';
+        this.inputEl.readOnly = true;
         this.inputEl.focus();
         break;
       }
