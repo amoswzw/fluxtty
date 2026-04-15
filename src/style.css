@@ -1024,6 +1024,7 @@ body[data-transparent="true"] .pane-ctx-menu {
 
 .input-field {
   flex: 1;
+  height: 100%;
   background: transparent;
   border: none;
   outline: none;
