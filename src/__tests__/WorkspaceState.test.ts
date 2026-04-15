@@ -11,6 +11,7 @@ function makePane(overrides: Partial<PaneInfo> = {}): PaneInfo {
     note: '',
     status: 'idle',
     cwd: '/home/user',
+    tmux_session: null,
     name_source: 'auto',
     agent_type: 'none',
     row_index: 0,
@@ -68,6 +69,13 @@ describe('formatWorkspaceContext', () => {
     expect(result).toContain('[TUI:no-shell]');
   });
 
+  it('does not mark tmux panes as TUI:no-shell', () => {
+    const pane = makePane({ alternate_screen: true, tmux_session: 'fluxtty-1' });
+    const result = formatWorkspaceContext(makeState([pane]));
+    expect(result).not.toContain('[TUI:no-shell]');
+    expect(result).toContain('tmux:fluxtty-1');
+  });
+
   it('shows last command in quotes', () => {
     const pane = makePane({ last_command: 'npm test' });
     const result = formatWorkspaceContext(makeState([pane]));
@@ -78,6 +86,12 @@ describe('formatWorkspaceContext', () => {
     const pane = makePane({ agent_type: 'claude' });
     const result = formatWorkspaceContext(makeState([pane]));
     expect(result).toContain('(claude)');
+  });
+
+  it('shows tmux session when attached', () => {
+    const pane = makePane({ tmux_session: 'fluxtty-1' });
+    const result = formatWorkspaceContext(makeState([pane]));
+    expect(result).toContain('tmux:fluxtty-1');
   });
 
   it('returns empty state message when no panes', () => {

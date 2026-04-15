@@ -255,6 +255,9 @@ body[data-compact="true"] .terminal-row:not(:has(.terminal-pane.active)) .pane-r
   background: color-mix(in srgb, var(--border) 22%, transparent 78%);
 }
 body[data-compact="true"] .term-container {
+  padding: 0;
+}
+body[data-compact="true"] .xterm {
   padding: 6px 7px 5px;
 }
 body[data-compact="true"] .terminal-row:not(:has(.terminal-pane.active)) .row-note-toggle {
@@ -481,6 +484,7 @@ body.has-row-view .terminal-row.row-view-active .terminal-pane.active {
   overflow: hidden;
   background: var(--pane-bg);
   min-width: 0;
+  min-height: 0;
   transition: background 0.15s;
 }
 .terminal-pane:last-child { border-right: none; }
@@ -720,13 +724,17 @@ body[data-show-note-btn="false"] .row-note-toggle { display: none; }
 
 .term-container {
   flex: 1;
+  min-height: 0;
   overflow: hidden;
-  padding: 4px;
+  padding: 0;
   overscroll-behavior: contain;
 }
 
 /* xterm overrides */
-.xterm { height: 100%; }
+.xterm {
+  height: 100%;
+  padding: 4px;
+}
 .xterm-viewport { overscroll-behavior: contain; }
 .xterm-viewport::-webkit-scrollbar { display: none; }
 body[data-transparent="true"] .xterm,

@@ -20,6 +20,7 @@ interface PaneSnapshot {
   group: string;
   note: string;
   cwd: string;
+  tmux_session?: string | null;
   name_source?: PaneNameSource;
   row_index: number;
   pane_index: number;
@@ -252,6 +253,7 @@ function buildSnapshot(waterfallArea: WaterfallArea): WorkspaceSnapshot {
         // Store row note only on first pane in row; other panes leave it empty.
         note: paneIdx === 0 ? rowNote : '',
         cwd: info.cwd,
+        tmux_session: info.tmux_session ?? null,
         name_source: info.name_source,
         row_index: rowIdx,
         pane_index: paneIdx,
@@ -288,6 +290,7 @@ async function restoreSnapshot(snapshot: WorkspaceSnapshot, waterfallArea: Water
       newRow: isNewRow,
       cwd: snap.cwd,
       group: snap.group,
+      tmuxSession: snap.tmux_session ?? null,
       targetRow: isNewRow ? undefined : domRowIdx,
     });
     if (!pane) { console.warn('[restore] spawnPane returned null, skipping'); continue; }

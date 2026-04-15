@@ -688,6 +688,17 @@ const SECTIONS: Section[] = [
           },
           { path: 'session_defaults.group', label: 'Default group', type: 'text' },
           { path: 'session_defaults.shell', label: 'Session shell override', type: 'text', desc: 'Optional per-session shell (overrides shell.program)' },
+          { path: 'tmux.enabled', label: 'Launch panes in tmux', type: 'checkbox', desc: 'Default off. When enabled, new panes attach to a tmux session instead of starting the shell directly.' },
+          { path: 'tmux.program', label: 'tmux program', type: 'text', desc: 'Usually tmux, or an absolute path if needed' },
+          { path: 'tmux.session', label: 'tmux session template', type: 'text', desc: 'Supports {cwd_name}, {short_id}, and {pane_id}. Use a fixed name to share one tmux session.' },
+          { path: 'tmux.auto_attach', label: 'Auto attach existing session', type: 'checkbox', desc: 'Use tmux new-session -A so an existing session is reused' },
+          { path: 'tmux.passthrough', label: 'tmux OSC passthrough', type: 'checkbox', desc: 'Let Fluxtty shell metadata pass through tmux when supported by tmux' },
+          {
+            path: 'tmux.extra_args', label: 'tmux args', type: 'textarea',
+            desc: 'One tmux argument per line, placed before new-session. Default includes -u.',
+            read: (v: string[]) => Array.isArray(v) ? v.join('\n') : '',
+            write: (s: string) => s.split('\n').map(l => l.trim()).filter(Boolean),
+          },
         ],
       },
       {

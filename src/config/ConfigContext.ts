@@ -47,6 +47,7 @@ export interface AppConfig {
   cursor: { style: string; blinking: boolean; blink_interval: number };
   scrolling: { history: number; multiplier: number };
   shell: { program: string; args: string[] };
+  tmux: { enabled: boolean; program: string; session: string; auto_attach: boolean; passthrough: boolean; extra_args: string[] };
   keybindings: Array<{ key: string; mods: string | null; action: string }>;
   input: { live_typing: boolean; workspace_scroll_modifier: string };
   workspace_ai: {
