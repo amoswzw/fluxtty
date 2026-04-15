@@ -164,27 +164,28 @@ export async function initApp(root: HTMLElement) {
   });
 
   // ── Persistence: save snapshot on close, then truly exit ────────────────
-  // event.preventDefault() lets the async save finish before the app exits.
-  // appWindow.destroy() is used for the final close so it doesn't re-fire
-  // onCloseRequested (unlike appWindow.close()).
-  appWindow.onCloseRequested(async (event) => {
-    if (!configContext.get().persistence.restore_workspace_on_launch) return;
-    event.preventDefault();
+  const performShutdown = async () => {
+    if (!configContext.get().persistence.restore_workspace_on_launch) {
+      await transport.send('app_exit');
+      return;
+    }
     try {
       const snapshot = buildSnapshot(waterfallArea);
       await transport.send('workspace_snapshot_save', { snapshot });
     } catch (e) {
       console.error('Failed to save workspace snapshot:', e);
     }
-    try {
-      await appWindow.destroy();
-    } catch (e) {
-      console.error('Failed to destroy window:', e);
-      // Last resort: try close() which will re-emit closeRequested,
-      // but at this point keep_alive check will still pass — so guard
-      // against infinite loop by temporarily relying on the OS to close.
-      await appWindow.close().catch(() => {});
-    }
+    // Command the backend to exit after saving
+    await transport.send('app_exit').catch(() => {});
+  };
+
+  appWindow.onCloseRequested(async (event) => {
+    event.preventDefault();
+    await performShutdown();
+  });
+
+  transport.listen('app:request_exit', async () => {
+    await performShutdown();
   });
 
   // Session count in header

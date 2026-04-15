@@ -609,7 +609,7 @@ export class InputBar {
     const pane = sessionManager.getActivePane();
     const name = pane?.name ?? '—';
     this.promptEl.textContent = '';
-    this.inputEl.placeholder = `${name}  ·  i: insert  a: AI  /: find  hjkl: nav`;
+    this.inputEl.placeholder = `${name}  ·  i: insert  a: AI  hjkl: nav  Ctrl+\\: term`;
   }
 
   private dispatchWorkspaceAction(action: string) {
@@ -936,7 +936,7 @@ export class InputBar {
         this.modeIndicatorEl.textContent = 'NORMAL';
         this.modeIndicatorEl.className = 'mode-indicator mode-normal';
         this.inputEl.placeholder = pane
-          ? `${name}  ·  i: insert  v: view  a: AI  /: find  m: note  hjkl: nav`
+          ? `${name}  ·  i: insert  v: view  a: AI  m: note  hjkl: nav  Ctrl+\\: term`
           : 'n: new terminal  a: AI';
         this.inputEl.readOnly = true;
         this.inputEl.focus();
