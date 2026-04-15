@@ -24,11 +24,15 @@ export class WaterfallArea {
   private scrollSettleTimer: ReturnType<typeof setTimeout> | null = null;
   private nextPaneId = 1;
   private lastPointerPos: { x: number; y: number } | null = null;
+  private rowViewPaneId: number | null = null;
+  private rowViewActiveRow: HTMLElement | null = null;
+  private rowViewRestoreScrollTop: number | null = null;
 
   constructor(container: HTMLElement) {
     this.el = document.createElement('div');
     this.el.className = 'waterfall-area';
     container.appendChild(this.el);
+
     this.layoutObserver = new ResizeObserver(() => this.recalcRowHeights());
     this.layoutObserver.observe(this.el);
     this.el.addEventListener('scroll', () => this.scheduleEdgeSettle(), { passive: true });
@@ -49,17 +53,28 @@ export class WaterfallArea {
       for (const pane of this.panes.values()) {
         pane.setActive(pane.paneId === id);
       }
+      if (this.rowViewActiveRow && modeManager.getMode().type !== 'normal') {
+        this.showOnlyActiveRow(id);
+      }
     });
+
+    // Row view is a temporary layout state:
+    // view -> show only the active pane's row, with that pane expanded
+    // insert/terminal while in row view -> keep that pane isolated
+    // normal -> restore the full waterfall
+    modeManager.onChange((mode) => {
+      if (mode.type === 'view') {
+        this.showOnlyActiveRow(mode.paneId);
+      } else if (mode.type === 'normal') {
+        this.clearRowView();
+      }
+      // insert / terminal / ai / pane-selector: preserve current row view state
+    });
+
     window.addEventListener('resize', () => this.recalcRowHeights());
 
     document.addEventListener('mousemove', (e) => {
       this.lastPointerPos = { x: e.clientX, y: e.clientY };
-      if (this.isWorkspaceScrollModifierHeld(e)) {
-        this.syncHoveredPaneFromPointer();
-      }
-    }, true);
-    document.addEventListener('keydown', (e) => {
-      if (!['Meta', 'Control', 'Alt', 'Shift'].includes(e.key)) return;
       if (this.isWorkspaceScrollModifierHeld(e)) {
         this.syncHoveredPaneFromPointer();
       }
@@ -108,12 +123,15 @@ export class WaterfallArea {
     // Normal-mode vi scroll: j/k/gg/G/Ctrl+D/U/F/B dispatch this event
     document.addEventListener('normal-vi-scroll', (e: Event) => {
       const { cmd } = (e as CustomEvent<{ cmd: string }>).detail;
+      const inViewMode = modeManager.getMode().type === 'view';
       switch (cmd) {
         case 'top':
-          this.jumpWorkspaceBoundary('top');
+          if (inViewMode) { this.getActivePane()?.scrollToTop(); }
+          else { this.jumpWorkspaceBoundary('top'); }
           return;
         case 'bottom':
-          this.jumpWorkspaceBoundary('bottom');
+          if (inViewMode) { this.getActivePane()?.scrollToBottom(); }
+          else { this.jumpWorkspaceBoundary('bottom'); }
           return;
       }
 
@@ -178,6 +196,17 @@ export class WaterfallArea {
   private recalcRowHeights() {
     const bottomOcclusion = this.getBottomOcclusion();
     this.el.style.setProperty('--workspace-bottom-safe-gap', `${bottomOcclusion}px`);
+
+    if (this.rowViewActiveRow) {
+      if (!this.rowEls.includes(this.rowViewActiveRow)) {
+        this.clearRowView();
+        return;
+      }
+      this.rowViewActiveRow.style.height = `${this.getRowViewHeight()}px`;
+      if (this.rowViewPaneId != null) this.fitPane(this.rowViewPaneId);
+      return;
+    }
+
     const containerH = this.el.clientHeight || (window.innerHeight - 36 - 42);
     const cfg = configContext.get();
     const rowCount = this.rowEls.length;
@@ -223,8 +252,8 @@ export class WaterfallArea {
       return;
     }
 
-    const paddingY = configContext.get().window.padding.y;
-    const visibleH = Math.max(this.el.clientHeight - paddingY * 2, 1);
+    const padding = this.getWorkspacePadding();
+    const visibleH = Math.max(this.el.clientHeight - padding.top - padding.bottom, 1);
     const rowGap = this.getRowGap();
     const rowHeight = Math.max(
       rowEl.getBoundingClientRect().height || rowEl.clientHeight || Math.round(parseFloat(rowEl.style.height || '0')),
@@ -236,8 +265,24 @@ export class WaterfallArea {
       ? Math.min(Math.max(Math.floor(rowsPerViewport / 3), 0), rowsPerViewport - 1)
       : rowsPerViewport - 1;
     const startIndex = Math.min(Math.max(targetIndex - preferredOffset, 0), maxStart);
-    const top = Math.max(this.rowEls[startIndex].offsetTop - paddingY, 0);
+    const top = this.getRowScrollTop(this.rowEls[startIndex]);
     this.el.scrollTo({ top, behavior });
+  }
+
+  private getWorkspacePadding(): { top: number; bottom: number } {
+    const styles = window.getComputedStyle(this.el);
+    return {
+      top: parseFloat(styles.paddingTop || '0') || 0,
+      bottom: parseFloat(styles.paddingBottom || '0') || 0,
+    };
+  }
+
+  private getRowScrollTop(rowEl: HTMLElement): number {
+    const rowRect = rowEl.getBoundingClientRect();
+    const containerRect = this.el.getBoundingClientRect();
+    const padding = this.getWorkspacePadding();
+    const rowTopInScrollContent = rowRect.top - containerRect.top + this.el.scrollTop;
+    return Math.max(rowTopInScrollContent - padding.top, 0);
   }
 
   private getRowGap(): number {
@@ -298,9 +343,8 @@ export class WaterfallArea {
 
   private getRowSnapPoints(): number[] {
     const maxScrollTop = Math.max(this.el.scrollHeight - this.el.clientHeight, 0);
-    const paddingY = configContext.get().window.padding.y;
     return this.rowEls
-      .map(rowEl => Math.max(rowEl.offsetTop - paddingY, 0))
+      .map(rowEl => this.getRowScrollTop(rowEl))
       .concat(maxScrollTop);
   }
 
@@ -665,6 +709,10 @@ export class WaterfallArea {
     if (this.panes.size === 0) {
       modeManager.enterNormal();
     } else if (fallback != null) {
+      // If the pane that owns row view closes, return to normal layout.
+      if (this.rowViewPaneId === id) {
+        modeManager.enterNormal(); // triggers clearRowView via onChange
+      }
       sessionManager.setActivePane(fallback);
       this.scrollToPane(fallback);
       // If we were in Terminal mode, transfer it to the new active pane.
@@ -1037,5 +1085,58 @@ export class WaterfallArea {
       const handle = this._createResizeHandle('pane');
       rowEl.insertBefore(handle, termPanes[i]);
     }
+  }
+
+  private showOnlyActiveRow(paneId: number) {
+    const pane = this.panes.get(paneId);
+    if (!pane) return;
+    const activeRow = pane.el.parentElement as HTMLElement | null;
+    if (!activeRow?.classList.contains('terminal-row')) return;
+
+    if (!this.rowViewActiveRow) {
+      this.rowViewRestoreScrollTop = this.el.scrollTop;
+    }
+    this.clearRowViewClasses();
+    this.rowViewPaneId = paneId;
+    this.rowViewActiveRow = activeRow;
+    document.body.classList.add('has-row-view');
+
+    for (const rowEl of this.rowEls) {
+      rowEl.classList.toggle('row-view-active', rowEl === activeRow);
+      rowEl.classList.toggle('row-view-hidden', rowEl !== activeRow);
+    }
+    activeRow.style.height = `${this.getRowViewHeight()}px`;
+    this.el.scrollTop = 0;
+    requestAnimationFrame(() => this.fitPane(paneId));
+  }
+
+  private clearRowView() {
+    if (this.rowViewPaneId == null && !this.rowViewActiveRow) return;
+    const restoreScrollTop = this.rowViewRestoreScrollTop;
+    this.rowViewPaneId = null;
+    this.rowViewActiveRow = null;
+    this.rowViewRestoreScrollTop = null;
+    document.body.classList.remove('has-row-view');
+    this.clearRowViewClasses();
+    requestAnimationFrame(() => {
+      this.recalcRowHeights();
+      if (restoreScrollTop != null) this.el.scrollTop = restoreScrollTop;
+    });
+  }
+
+  private clearRowViewClasses() {
+    for (const rowEl of this.rowEls) {
+      rowEl.classList.remove('row-view-active', 'row-view-hidden');
+    }
+  }
+
+  private getRowViewHeight(): number {
+    const style = getComputedStyle(this.el);
+    const paddingY = parseFloat(style.paddingTop || '0') + parseFloat(style.paddingBottom || '0');
+    return Math.max(Math.floor(this.el.clientHeight - paddingY), 1);
+  }
+
+  private fitPane(paneId: number) {
+    this.panes.get(paneId)?.fit();
   }
 }
