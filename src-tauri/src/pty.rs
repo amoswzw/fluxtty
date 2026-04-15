@@ -613,6 +613,10 @@ impl PtyManager {
 
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        // Clear inherited tmux environment variables to allow fluxtty to nest seamlessly
+        // if fluxtty itself was launched from inside an existing tmux session (e.g. CLI)
+        cmd.env_remove("TMUX");
+        cmd.env_remove("TMUX_PANE");
         for (k, v) in &integration.env {
             cmd.env(k, v);
         }

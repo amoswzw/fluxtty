@@ -1236,3 +1236,10 @@ pub async fn window_set_traffic_lights_hidden(
     let _ = (window, hidden);
     Ok(())
 }
+
+/// Forcefully exits the Tauri application with code 0.
+#[tauri::command]
+pub async fn app_exit(app: tauri::AppHandle) -> Result<(), String> {
+    app.exit(0);
+    Ok(())
+}

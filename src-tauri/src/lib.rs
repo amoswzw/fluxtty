@@ -106,7 +106,16 @@ pub fn run() {
             workspace_snapshot_save,
             workspace_snapshot_load,
             window_set_traffic_lights_hidden,
+            app_exit,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running fluxtty");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(move |app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                // Prevent immediate exit so we can save the workspace gracefully
+                api.prevent_exit();
+                use tauri::Emitter;
+                let _ = app_handle.emit("app:request_exit", ());
+            }
+        });
 }

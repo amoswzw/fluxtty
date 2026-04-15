@@ -101,7 +101,7 @@ const AGENT_PATTERNS: AgentRule[] = [
 ];
 
 // Patterns that signal the agent has exited back to a plain shell prompt
-const EXIT_PATTERNS = [/\$\s*$/, /[%#]\s*$/];
+const EXIT_PATTERNS = [/\$\s*$/, /[%#]\s*$/, /❯\s*$/, /➜\s*$/, /→\s*$/];
 
 function unwrapCommand(command: string): string {
   let current = command.trim();

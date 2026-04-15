@@ -337,6 +337,16 @@ const THEME_PRESET_LIST: ThemePreset[] = [
     normal:  { black: '#073642', red: '#dc322f', green: '#859900', yellow: '#b58900', blue: '#268bd2', magenta: '#d33682', cyan: '#2aa198', white: '#eee8d5' },
     bright:  { black: '#002b36', red: '#cb4b16', green: '#586e75', yellow: '#657b83', blue: '#839496', magenta: '#6c71c4', cyan: '#93a1a1', white: '#fdf6e3' },
   },
+  {
+    id: 'vim-default',
+    label: 'Vim Default',
+    tone: 'Dark',
+    description: 'Native vim default colorscheme feel — teal comments, bright yellow keywords, dark green types on a near-black background.',
+    primary: { background: '#1c1c1c', foreground: '#d0d0d0' },
+    cursor:  { text: '#1c1c1c', cursor: '#d0d0d0' },
+    normal:  { black: '#303030', red: '#af0000', green: '#008700', yellow: '#c7a200', blue: '#005faf', magenta: '#870087', cyan: '#007878', white: '#b2b2b2' },
+    bright:  { black: '#767676', red: '#d70000', green: '#5faf00', yellow: '#ffff00', blue: '#5f87d7', magenta: '#af87ff', cyan: '#00afaf', white: '#eeeeee' },
+  },
 ];
 
 const THEME_PRESETS: Record<string, ThemePreset> = Object.fromEntries(
