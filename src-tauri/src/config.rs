@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+const DEFAULT_TMUX_SESSION_TEMPLATE: &str = "fluxtty-{cwd_name}-{short_id}";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -12,6 +14,7 @@ pub struct Config {
     pub cursor: CursorConfig,
     pub scrolling: ScrollingConfig,
     pub shell: ShellConfig,
+    pub tmux: TmuxConfig,
     pub keybindings: Vec<KeyBinding>,
     pub input: InputConfig,
     pub workspace_ai: WorkspaceAiConfig,
@@ -104,6 +107,18 @@ pub struct ScrollingConfig {
 pub struct ShellConfig {
     pub program: String,
     pub args: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TmuxConfig {
+    pub enabled: bool,
+    pub program: String,
+    /// tmux session name template. Supports {cwd_name}, {short_id}, and {pane_id}.
+    pub session: String,
+    pub auto_attach: bool,
+    pub passthrough: bool,
+    pub extra_args: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -242,6 +257,7 @@ impl Default for Config {
             cursor: CursorConfig::default(),
             scrolling: ScrollingConfig::default(),
             shell: ShellConfig::default(),
+            tmux: TmuxConfig::default(),
             keybindings: default_keybindings(),
             input: InputConfig::default(),
             workspace_ai: WorkspaceAiConfig::default(),
@@ -376,6 +392,19 @@ impl Default for ShellConfig {
         ShellConfig {
             program: shell,
             args: vec![],
+        }
+    }
+}
+
+impl Default for TmuxConfig {
+    fn default() -> Self {
+        TmuxConfig {
+            enabled: false,
+            program: "tmux".to_string(),
+            session: DEFAULT_TMUX_SESSION_TEMPLATE.to_string(),
+            auto_attach: true,
+            passthrough: true,
+            extra_args: vec!["-u".to_string()],
         }
     }
 }
@@ -575,4 +604,28 @@ persistence:
         let cfg: Config = serde_yaml::from_str("{}").unwrap();
         assert!(cfg.persistence.restore_workspace_on_launch);
     }
+
+    #[test]
+    fn tmux_defaults_to_disabled_but_passthrough_ready() {
+        let cfg: Config = serde_yaml::from_str("{}").unwrap();
+        assert!(!cfg.tmux.enabled);
+        assert_eq!(cfg.tmux.program, "tmux");
+        assert_eq!(cfg.tmux.session, "fluxtty-{cwd_name}-{short_id}");
+        assert!(cfg.tmux.auto_attach);
+        assert!(cfg.tmux.passthrough);
+    }
+
+    #[test]
+    fn tmux_config_can_be_enabled() {
+        let cfg: Config = serde_yaml::from_str(r#"
+tmux:
+  enabled: true
+  session: work
+  extra_args: ["-L", "fluxtty"]
+"#).unwrap();
+        assert!(cfg.tmux.enabled);
+        assert_eq!(cfg.tmux.session, "work");
+        assert_eq!(cfg.tmux.extra_args, vec!["-L".to_string(), "fluxtty".to_string()]);
+    }
+
 }

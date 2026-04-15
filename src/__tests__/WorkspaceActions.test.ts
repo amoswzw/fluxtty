@@ -56,6 +56,7 @@ function makePane(overrides: Partial<PaneInfo> = {}): PaneInfo {
     note: '',
     status: 'idle',
     cwd: '/app',
+    tmux_session: null,
     name_source: 'auto',
     agent_type: 'none',
     row_index: 0,

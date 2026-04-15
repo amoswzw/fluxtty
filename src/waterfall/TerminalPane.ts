@@ -249,7 +249,7 @@ export class TerminalPane {
           //   ?1047h/l — older ncurses programs
           //   ?47h/l   — original xterm alternate screen (mutt legacy, etc.)
           // Only act when this is the active pane.
-          if (sessionManager.getActivePaneId() === this.paneId) {
+          if (sessionManager.getActivePaneId() === this.paneId && !this.info.tmux_session) {
             const entersAltScreen =
               data.includes('\x1b[?1049h') ||
               data.includes('\x1b[?1047h') ||

@@ -49,6 +49,7 @@ pub struct PaneInfo {
     pub note: String,
     pub status: SessionStatus,
     pub cwd: String,
+    pub tmux_session: Option<String>,
     pub name_source: PaneNameSource,
     pub agent_type: AgentType,
     pub row_index: usize,
@@ -92,7 +93,14 @@ impl SessionManager {
         }
     }
 
-    pub fn create_pane(&mut self, id: u32, cwd: String, group: String, row_index: usize) -> PaneInfo {
+    pub fn create_pane(
+        &mut self,
+        id: u32,
+        cwd: String,
+        group: String,
+        row_index: usize,
+        tmux_session: Option<String>,
+    ) -> PaneInfo {
         // Keep next_id ahead of any explicitly-assigned id to avoid future collisions
         if id >= self.next_id {
             self.next_id = id + 1;
@@ -113,6 +121,7 @@ impl SessionManager {
             note: String::new(),
             status: SessionStatus::Idle,
             cwd,
+            tmux_session,
             name_source: PaneNameSource::Auto,
             agent_type: AgentType::None,
             row_index,

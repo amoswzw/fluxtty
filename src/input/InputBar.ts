@@ -771,6 +771,7 @@ export class InputBar {
     const live = agentDetector.getAgent(pane.id);
     const agent = live !== 'none' ? live : pane.agent_type;
     if (agent !== 'none') return { label: AGENT_LABELS[agent] || agent, kind: 'agent' };
+    if (pane.tmux_session) return { label: '', kind: 'none' };
     if (pane.alternate_screen) return { label: 'TUI', kind: 'tui' };
     return { label: '', kind: 'none' };
   }

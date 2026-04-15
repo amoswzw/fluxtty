@@ -24,6 +24,8 @@ export interface PaneInfo {
   note: string;
   status: SessionStatus;
   cwd: string;
+  /** tmux session attached by this pane when tmux launch is enabled. Null for normal PTYs. */
+  tmux_session: string | null;
   name_source: PaneNameSource;
   agent_type: AgentType;
   row_index: number;

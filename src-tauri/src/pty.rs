@@ -1,9 +1,12 @@
+use crate::config::TmuxConfig;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tauri::{AppHandle, Emitter};
+use uuid::Uuid;
 
 // ── Shell integration ────────────────────────────────────────────────────────
 // Injects an OSC 7 CWD-notification hook into the spawned shell so fluxtty
@@ -28,24 +31,48 @@ use tauri::{AppHandle, Emitter};
 //            idempotent on each spawn).
 
 struct ShellIntegration {
-    env:       Vec<(String, String)>,
+    env: Vec<(String, String)>,
     extra_args: Vec<String>,
 }
 
 impl Default for ShellIntegration {
-    fn default() -> Self { ShellIntegration { env: vec![], extra_args: vec![] } }
+    fn default() -> Self {
+        ShellIntegration {
+            env: vec![],
+            extra_args: vec![],
+        }
+    }
 }
 
-fn setup_shell_integration(shell: &str, user_args: &[String]) -> ShellIntegration {
-    let name = std::path::Path::new(shell)
-        .file_name().and_then(|n| n.to_str()).unwrap_or("");
-    if name.contains("zsh")  { return setup_zsh(); }
-    if name.contains("bash") { return setup_bash(user_args); }
-    if name == "fish"        { return setup_fish(); }
+fn shell_integration_env(tmux_passthrough: bool) -> Vec<(String, String)> {
+    vec![(
+        "_FLUXTTY_TMUX_PASSTHROUGH".to_string(),
+        if tmux_passthrough { "1" } else { "0" }.to_string(),
+    )]
+}
+
+fn setup_shell_integration(
+    shell: &str,
+    user_args: &[String],
+    tmux_passthrough: bool,
+) -> ShellIntegration {
+    let name = Path::new(shell)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    if name.contains("zsh") {
+        return setup_zsh(tmux_passthrough);
+    }
+    if name.contains("bash") {
+        return setup_bash(user_args, tmux_passthrough);
+    }
+    if name == "fish" {
+        return setup_fish(tmux_passthrough);
+    }
     ShellIntegration::default()
 }
 
-fn setup_zsh() -> ShellIntegration {
+fn setup_zsh(tmux_passthrough: bool) -> ShellIntegration {
     let zdotdir = match dirs::config_dir() {
         Some(d) => d.join("fluxtty").join("zdotdir"),
         None => return ShellIntegration::default(),
@@ -55,7 +82,10 @@ fn setup_zsh() -> ShellIntegration {
     }
 
     let orig = std::env::var("ZDOTDIR").unwrap_or_else(|_| {
-        dirs::home_dir().unwrap_or_default().to_string_lossy().to_string()
+        dirs::home_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
     });
 
     // No .zshenv is created intentionally.
@@ -89,17 +119,28 @@ fn setup_zsh() -> ShellIntegration {
     //   _wt_preexec — runs just before each command executes:
     //     • emits OSC 133;B;cmd=<command> (command start, first 512 chars)
     //   chpwd still fires _wt_cwd on plain `cd` between prompts.
-    let zshrc = format!(r#"# fluxtty — auto-generated, do not edit
+    let zshrc = format!(
+        r#"# fluxtty — auto-generated, do not edit
 if [[ -z "$_FLUXTTY_INIT" ]]; then
   export _FLUXTTY_INIT=1
-  _wt_cwd() {{ printf '\033]7;file://%s%s\033\\' "$HOST" "$PWD"; }}
+  _wt_osc() {{
+    if [[ -n "$TMUX" && "${{_FLUXTTY_TMUX_PASSTHROUGH:-1}}" != "0" ]]; then
+      printf '\033Ptmux;\033\033]%s\007\033\\' "$1"
+    else
+      printf '\033]%s\007' "$1"
+    fi
+  }}
+  _wt_cwd() {{ _wt_osc "7;file://$HOST$PWD"; }}
   _wt_precmd() {{
     local _ec=$?
-    printf '\033]133;D;%d\033\\' "$_ec"
+    _wt_osc "133;D;$_ec"
     _wt_cwd
-    printf '\033]133;A\033\\'
+    _wt_osc "133;A"
   }}
-  _wt_preexec() {{ printf '\033]133;B;cmd=%.512s\033\\' "$1"; }}
+  _wt_preexec() {{
+    local _cmd="${{1:0:512}}"
+    _wt_osc "133;B;cmd=$_cmd"
+  }}
   typeset -ga precmd_functions chpwd_functions preexec_functions
   precmd_functions+=(_wt_precmd)
   chpwd_functions+=(_wt_cwd)
@@ -108,17 +149,21 @@ if [[ -z "$_FLUXTTY_INIT" ]]; then
 fi
 export ZDOTDIR="{orig}"
 [[ -f "{orig}/.zshrc" ]] && source "{orig}/.zshrc"
-"#);
+"#
+    );
 
     let _ = std::fs::write(zdotdir.join(".zshrc"), &zshrc);
 
+    let mut env = shell_integration_env(tmux_passthrough);
+    env.push(("ZDOTDIR".to_string(), zdotdir.to_string_lossy().to_string()));
+
     ShellIntegration {
-        env: vec![("ZDOTDIR".to_string(), zdotdir.to_string_lossy().to_string())],
+        env,
         extra_args: vec![],
     }
 }
 
-fn setup_bash(user_args: &[String]) -> ShellIntegration {
+fn setup_bash(user_args: &[String], tmux_passthrough: bool) -> ShellIntegration {
     let init_dir = match dirs::config_dir() {
         Some(d) => d.join("fluxtty"),
         None => return ShellIntegration::default(),
@@ -138,18 +183,26 @@ fn setup_bash(user_args: &[String]) -> ShellIntegration {
     let init_script = r#"# fluxtty — auto-generated, do not edit
 if [[ -z "$_FLUXTTY_INIT" ]]; then
   export _FLUXTTY_INIT=1
-  _wt_cwd() { printf '\033]7;file://%s%s\007' "${HOSTNAME:-$(hostname)}" "$PWD"; }
+  _wt_osc() {
+    if [[ -n "$TMUX" && "${_FLUXTTY_TMUX_PASSTHROUGH:-1}" != "0" ]]; then
+      printf '\033Ptmux;\033\033]%s\007\033\\' "$1"
+    else
+      printf '\033]%s\007' "$1"
+    fi
+  }
+  _wt_cwd() { _wt_osc "7;file://${HOSTNAME:-$(hostname)}$PWD"; }
   _wt_precmd_bash() {
     local _ec=$?
-    printf '\033]133;D;%d\007' "$_ec"
+    _wt_osc "133;D;$_ec"
     _wt_cwd
-    printf '\033]133;A\007'
+    _wt_osc "133;A"
     _wt_cmd_pending=1
   }
   _wt_preexec_bash() {
     if [[ "$_wt_cmd_pending" == "1" && "$BASH_COMMAND" != "_wt_precmd_bash" ]]; then
       _wt_cmd_pending=0
-      printf '\033]133;B;cmd=%.512s\007' "$BASH_COMMAND"
+      local _cmd="${BASH_COMMAND:0:512}"
+      _wt_osc "133;B;cmd=$_cmd"
     fi
   }
   _wt_cmd_pending=1
@@ -177,19 +230,21 @@ trap '_wt_preexec_bash' DEBUG
         // Login shells don't read --init-file; export the function via
         // bash's BASH_FUNC_* mechanism and seed PROMPT_COMMAND as env vars.
         // Best-effort: user's .bash_profile may still overwrite PROMPT_COMMAND.
-        ShellIntegration {
-            env: vec![
+        let mut env = shell_integration_env(tmux_passthrough);
+        env.extend(vec![
                 ("PROMPT_COMMAND".to_string(), "_wt_cwd".to_string()),
                 (
                     "BASH_FUNC__wt_cwd%%".to_string(),
-                    r#"() { printf '\033]7;file://%s%s\007' "${HOSTNAME:-$(hostname)}" "$PWD"; }"#.to_string(),
+                    r#"() { local _payload="7;file://${HOSTNAME:-$(hostname)}$PWD"; if [[ -n "$TMUX" && "${_FLUXTTY_TMUX_PASSTHROUGH:-1}" != "0" ]]; then printf '\033Ptmux;\033\033]%s\007\033\\' "$_payload"; else printf '\033]%s\007' "$_payload"; fi; }"#.to_string(),
                 ),
-            ],
+        ]);
+        ShellIntegration {
+            env,
             extra_args: vec![],
         }
     } else {
         ShellIntegration {
-            env: vec![],
+            env: shell_integration_env(tmux_passthrough),
             extra_args: vec![
                 "--init-file".to_string(),
                 init_path.to_string_lossy().to_string(),
@@ -198,7 +253,7 @@ trap '_wt_preexec_bash' DEBUG
     }
 }
 
-fn setup_fish() -> ShellIntegration {
+fn setup_fish(tmux_passthrough: bool) -> ShellIntegration {
     // fish auto-sources every *.fish file in conf.d at startup.
     // Writing here on each spawn is idempotent (content never changes).
     let conf_d = match dirs::home_dir() {
@@ -215,19 +270,31 @@ fn setup_fish() -> ShellIntegration {
     let script = r#"# fluxtty — auto-generated, do not edit
 if not set -q _FLUXTTY_INIT
   set -gx _FLUXTTY_INIT 1
+  function _wt_osc
+    set -l payload $argv[1]
+    if set -q TMUX; and test "$_FLUXTTY_TMUX_PASSTHROUGH" != "0"
+      printf '\033Ptmux;\033\033]%s\007\033\\' "$payload"
+    else
+      printf '\033]%s\007' "$payload"
+    end
+  end
   function _wt_precmd_fish --on-event fish_prompt
-    printf '\033]133;D;%d\033\\' $status
-    printf '\033]7;file://%s%s\033\\' (hostname) $PWD
-    printf '\033]133;A\033\\'
+    _wt_osc "133;D;$status"
+    _wt_osc "7;file://"(hostname)$PWD
+    _wt_osc "133;A"
   end
   function _wt_preexec_fish --on-event fish_preexec
-    printf '\033]133;B;cmd=%.512s\033\\' $argv[1]
+    set -l _cmd (printf '%.512s' $argv[1])
+    _wt_osc "133;B;cmd=$_cmd"
   end
   _wt_precmd_fish
 end
 "#;
     let _ = std::fs::write(conf_d.join("fluxtty.fish"), script);
-    ShellIntegration::default()
+    ShellIntegration {
+        env: shell_integration_env(tmux_passthrough),
+        extra_args: vec![],
+    }
 }
 
 // ── OSC 133 shell integration parser ────────────────────────────────────────
@@ -342,6 +409,135 @@ fn parse_osc7(data: &str) -> Option<String> {
     if path.starts_with('/') { Some(path) } else { None }
 }
 
+// ── tmux launcher ────────────────────────────────────────────────────────────
+
+fn shell_quote(arg: &str) -> String {
+    if arg.is_empty() {
+        return "''".to_string();
+    }
+
+    if arg.chars().all(|ch| {
+        ch.is_ascii_alphanumeric()
+            || matches!(
+                ch,
+                '@' | '%' | '_' | '+' | '=' | ':' | ',' | '.' | '/' | '-'
+            )
+    }) {
+        return arg.to_string();
+    }
+
+    format!("'{}'", arg.replace('\'', "'\\''"))
+}
+
+fn cwd_name(cwd: &str) -> String {
+    Path::new(cwd)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("workspace")
+        .to_string()
+}
+
+fn sanitize_tmux_session_name(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .map(|ch| {
+            if ch.is_control() || matches!(ch, ':' | ';') {
+                '_'
+            } else {
+                ch
+            }
+        })
+        .collect();
+    let trimmed = sanitized.trim();
+    if trimmed.is_empty() {
+        "fluxtty".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn short_tmux_id() -> String {
+    Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(8)
+        .collect()
+}
+
+fn expand_tmux_session_name(template: &str, pane_id: u32, cwd: &str, short_id: &str) -> String {
+    let raw = template
+        .replace("{pane_id}", &pane_id.to_string())
+        .replace("{cwd_name}", &cwd_name(cwd))
+        .replace("{short_id}", short_id);
+    sanitize_tmux_session_name(&raw)
+}
+
+fn resolve_tmux_session_name(
+    tmux: &TmuxConfig,
+    requested: Option<&str>,
+    pane_id: u32,
+    cwd: &str,
+) -> String {
+    requested
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(sanitize_tmux_session_name)
+        .unwrap_or_else(|| expand_tmux_session_name(&tmux.session, pane_id, cwd, &short_tmux_id()))
+}
+
+fn build_shell_command(shell: &str, integration_args: &[String], user_args: &[String]) -> String {
+    let words = std::iter::once(shell)
+        .chain(integration_args.iter().map(String::as_str))
+        .chain(user_args.iter().map(String::as_str))
+        .map(shell_quote)
+        .collect::<Vec<_>>();
+    words.join(" ")
+}
+
+fn build_tmux_args(
+    tmux: &TmuxConfig,
+    session_name: &str,
+    cwd: &str,
+    shell: &str,
+    shell_args: &[String],
+    integration: &ShellIntegration,
+) -> Vec<String> {
+    let mut args = tmux.extra_args.clone();
+
+    if tmux.passthrough {
+        // tmux 3.3+ gates passthrough. Older tmux versions ignore this quietly.
+        args.extend([
+            "set-option".to_string(),
+            "-gq".to_string(),
+            "allow-passthrough".to_string(),
+            "on".to_string(),
+            ";".to_string(),
+        ]);
+    }
+
+    args.push("new-session".to_string());
+    if tmux.auto_attach {
+        args.push("-A".to_string());
+    }
+    args.push("-s".to_string());
+    args.push(session_name.to_string());
+    args.push("-c".to_string());
+    args.push(cwd.to_string());
+    args.push(build_shell_command(
+        shell,
+        &integration.extra_args,
+        shell_args,
+    ));
+    args
+}
+
+pub struct PtySpawnOutcome {
+    pub pid: u32,
+    pub tmux_session: Option<String>,
+}
+
 pub struct PtyProcess {
     pub master: Box<dyn portable_pty::MasterPty + Send>,
     pub writer: Box<dyn Write + Send>,
@@ -367,12 +563,14 @@ impl PtyManager {
         pane_id: u32,
         shell: &str,
         args: &[String],
+        tmux: &TmuxConfig,
+        requested_tmux_session: Option<&str>,
         cwd: &str,
         cols: u16,
         rows: u16,
         app: AppHandle,
         session_mgr: crate::session::SharedSessionManager,
-    ) -> Result<u32, String> {
+    ) -> Result<PtySpawnOutcome, String> {
         let pty_system = native_pty_system();
 
         let pair = pty_system
@@ -384,14 +582,31 @@ impl PtyManager {
             })
             .map_err(|e| format!("Failed to open PTY: {}", e))?;
 
-        let integration = setup_shell_integration(shell, args);
+        let integration = setup_shell_integration(shell, args, tmux.passthrough);
 
-        let mut cmd = CommandBuilder::new(shell);
-        // Integration args (e.g. --init-file for bash) must come before user args
-        for arg in &integration.extra_args {
-            cmd.arg(arg);
-        }
-        for arg in args {
+        let (program, command_args, tmux_session) = if tmux.enabled {
+            let session_name =
+                resolve_tmux_session_name(tmux, requested_tmux_session, pane_id, cwd);
+            let tmux_program = if tmux.program.trim().is_empty() {
+                "tmux".to_string()
+            } else {
+                tmux.program.clone()
+            };
+            (
+                tmux_program,
+                build_tmux_args(tmux, &session_name, cwd, shell, args, &integration),
+                Some(session_name),
+            )
+        } else {
+            let mut command_args = Vec::new();
+            // Integration args (e.g. --init-file for bash) must come before user args.
+            command_args.extend(integration.extra_args.clone());
+            command_args.extend(args.iter().cloned());
+            (shell.to_string(), command_args, None)
+        };
+
+        let mut cmd = CommandBuilder::new(&program);
+        for arg in &command_args {
             cmd.arg(arg);
         }
         cmd.cwd(cwd);
@@ -402,25 +617,35 @@ impl PtyManager {
             cmd.env(k, v);
         }
 
-        let child = pair
-            .slave
-            .spawn_command(cmd)
-            .map_err(|e| format!("Failed to spawn shell: {}", e))?;
+        let child = pair.slave.spawn_command(cmd).map_err(|e| {
+            if tmux.enabled {
+                format!("Failed to spawn tmux: {}", e)
+            } else {
+                format!("Failed to spawn shell: {}", e)
+            }
+        })?;
 
         let pid = child.process_id().unwrap_or(0);
 
-        let writer = pair.master.take_writer()
+        let writer = pair
+            .master
+            .take_writer()
             .map_err(|e| format!("Failed to get PTY writer: {}", e))?;
 
-        let mut reader = pair.master.try_clone_reader()
+        let mut reader = pair
+            .master
+            .try_clone_reader()
             .map_err(|e| format!("Failed to get PTY reader: {}", e))?;
 
         let scrollback_arc: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         self.scrollback.insert(pane_id, scrollback_arc.clone());
-        self.ptys.insert(pane_id, PtyProcess {
-            master: pair.master,
-            writer,
-        });
+        self.ptys.insert(
+            pane_id,
+            PtyProcess {
+                master: pair.master,
+                writer,
+            },
+        );
 
         // Spawn reader thread
         let scrollback_clone = scrollback_arc.clone();
@@ -528,8 +753,17 @@ impl PtyManager {
             }
         });
 
-        log::info!("Spawned PTY for pane {} (pid {})", pane_id, pid);
-        Ok(pid)
+        if let Some(session) = &tmux_session {
+            log::info!(
+                "Spawned PTY for pane {} (pid {}, tmux session {})",
+                pane_id,
+                pid,
+                session
+            );
+        } else {
+            log::info!("Spawned PTY for pane {} (pid {})", pane_id, pid);
+        }
+        Ok(PtySpawnOutcome { pid, tmux_session })
     }
 
     pub fn write(&mut self, pane_id: u32, data: &[u8]) -> Result<(), String> {
@@ -565,7 +799,6 @@ impl PtyManager {
             .map(|v| v.clone())
             .unwrap_or_default()
     }
-
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -679,6 +912,74 @@ mod tests {
         let data = "\x1b]133;Z\x07";
         let events = parse_osc133(data);
         assert!(events.is_empty());
+    }
+
+    // ── tmux launcher helpers ────────────────────────────────────────────────
+
+    #[test]
+    fn test_tmux_session_template_expands_and_sanitizes() {
+        let name = expand_tmux_session_name(
+            "fluxtty-{pane_id}-{cwd_name}-{short_id}:bad",
+            42,
+            "/Users/alice/project",
+            "abc123ef",
+        );
+        assert_eq!(name, "fluxtty-42-project-abc123ef_bad");
+    }
+
+    #[test]
+    fn test_default_tmux_session_template_does_not_use_pane_id() {
+        let tmux = TmuxConfig::default();
+        let name = resolve_tmux_session_name(&tmux, None, 42, "/Users/alice/project");
+        assert!(name.starts_with("fluxtty-project-"));
+        assert!(!name.contains("42"));
+    }
+
+    #[test]
+    fn test_tmux_requested_session_wins_for_restore() {
+        let tmux = TmuxConfig::default();
+        let name = resolve_tmux_session_name(&tmux, Some("restored:session"), 7, "/tmp/other");
+        assert_eq!(name, "restored_session");
+    }
+
+    #[test]
+    fn test_tmux_args_include_attach_session_and_shell_command() {
+        let mut tmux = TmuxConfig::default();
+        tmux.extra_args = vec!["-L".to_string(), "fluxtty-test".to_string()];
+        let integration = ShellIntegration {
+            env: vec![],
+            extra_args: vec![
+                "--init-file".to_string(),
+                "/tmp/fluxtty init.sh".to_string(),
+            ],
+        };
+        let args = build_tmux_args(
+            &tmux,
+            "work",
+            "/tmp/project",
+            "/bin/bash",
+            &[],
+            &integration,
+        );
+        assert_eq!(
+            args,
+            vec![
+                "-L",
+                "fluxtty-test",
+                "set-option",
+                "-gq",
+                "allow-passthrough",
+                "on",
+                ";",
+                "new-session",
+                "-A",
+                "-s",
+                "work",
+                "-c",
+                "/tmp/project",
+                "/bin/bash --init-file '/tmp/fluxtty init.sh'",
+            ]
+        );
     }
 
     // ── parse_alternate_screen ────────────────────────────────────────────────

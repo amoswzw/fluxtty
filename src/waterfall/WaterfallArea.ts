@@ -584,7 +584,7 @@ export class WaterfallArea {
     return this.rowEls[rowIndex];
   }
 
-  async spawnPane(opts: { newRow: boolean; group?: string; cwd?: string; targetRow?: number; afterPaneId?: number }): Promise<TerminalPane | null> {
+  async spawnPane(opts: { newRow: boolean; group?: string; cwd?: string; tmuxSession?: string | null; targetRow?: number; afterPaneId?: number }): Promise<TerminalPane | null> {
     const paneId = this.nextPaneId++;
 
     // Inherit cwd from active pane for both new terminals and splits (unless explicitly overridden)
@@ -608,11 +608,13 @@ export class WaterfallArea {
       opts.newRow ? 1 : existingTermCount + 1,
     );
 
+    let spawnResult: { pane_id: number; pid: number; tmux_session: string | null };
     try {
-      await transport.send('pty_spawn', {
+      spawnResult = await transport.send<{ pane_id: number; pid: number; tmux_session: string | null }>('pty_spawn', {
         args: {
           pane_id: paneId,
           cwd: inheritedCwd || null,
+          tmux_session: opts.tmuxSession ?? null,
           cols: estCols,
           rows: estRows,
           new_row: opts.newRow,
@@ -633,6 +635,7 @@ export class WaterfallArea {
       note: '',
       status: 'idle' as const,
       cwd: opts.cwd || '~',
+      tmux_session: spawnResult.tmux_session,
       name_source: 'auto' as const,
       agent_type: 'none' as const,
       row_index: targetRowIndex,

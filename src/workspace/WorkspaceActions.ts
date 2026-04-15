@@ -87,6 +87,7 @@ export interface SpawnPaneOptions {
   newRow: boolean;
   group?: string;
   cwd?: string;
+  tmuxSession?: string | null;
   targetRow?: number;
   afterPaneId?: number;
 }

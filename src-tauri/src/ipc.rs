@@ -8,6 +8,7 @@ use tauri::{AppHandle, Emitter, State};
 pub struct SpawnPtyArgs {
     pub pane_id: u32,
     pub cwd: Option<String>,
+    pub tmux_session: Option<String>,
     pub cols: u16,
     pub rows: u16,
     pub new_row: bool,
@@ -33,6 +34,7 @@ pub struct ResizePtyArgs {
 pub struct SpawnPtyResult {
     pub pane_id: u32,
     pub pid: u32,
+    pub tmux_session: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -49,7 +51,7 @@ pub async fn pty_spawn(
     session_mgr: State<'_, SharedSessionManager>,
     config: State<'_, SharedConfig>,
 ) -> Result<SpawnPtyResult, String> {
-    let (shell, shell_args, group, cwd) = {
+    let (shell, shell_args, tmux, group, cwd) = {
         let cfg = config.lock().unwrap();
         // session_defaults.shell overrides cfg.shell.program if set
         let shell = cfg
@@ -59,6 +61,7 @@ pub async fn pty_spawn(
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| cfg.shell.program.clone());
         let shell_args = cfg.shell.args.clone();
+        let tmux = cfg.tmux.clone();
         let group = cfg.session_defaults.group.clone();
         let cwd = args.cwd.unwrap_or_else(|| {
             dirs::home_dir()
@@ -67,7 +70,7 @@ pub async fn pty_spawn(
                 .to_string_lossy()
                 .to_string()
         });
-        (shell, shell_args, group, cwd)
+        (shell, shell_args, tmux, group, cwd)
     };
 
     let row_index = {
@@ -93,12 +96,14 @@ pub async fn pty_spawn(
         }
     };
 
-    let pid = {
+    let spawn = {
         let mut pty = pty_mgr.lock().unwrap();
         pty.spawn(
             args.pane_id,
             &shell,
             &shell_args,
+            &tmux,
+            args.tmux_session.as_deref(),
             &cwd,
             args.cols,
             args.rows,
@@ -109,7 +114,13 @@ pub async fn pty_spawn(
 
     {
         let mut session = session_mgr.lock().unwrap();
-        let _pane = session.create_pane(args.pane_id, cwd, group, row_index);
+        let _pane = session.create_pane(
+            args.pane_id,
+            cwd,
+            group,
+            row_index,
+            spawn.tmux_session.clone(),
+        );
         // Notify frontend of session change
         let _ = app.emit("session:changed", session.all_panes());
         drop(session);
@@ -117,7 +128,8 @@ pub async fn pty_spawn(
 
     Ok(SpawnPtyResult {
         pane_id: args.pane_id,
-        pid,
+        pid: spawn.pid,
+        tmux_session: spawn.tmux_session,
     })
 }
 
@@ -1102,6 +1114,8 @@ pub struct PaneSnapshot {
     pub group: String,
     pub note: String,
     pub cwd: String,
+    #[serde(default)]
+    pub tmux_session: Option<String>,
     #[serde(default)]
     pub name_source: Option<PaneNameSource>,
     pub row_index: usize,

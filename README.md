@@ -162,6 +162,12 @@ cursor:
 input:
   live_typing: false   # true: each keystroke forwarded immediately
 
+tmux:
+  enabled: false       # true: new panes launch through tmux
+  session: "fluxtty-{cwd_name}-{short_id}"  # saved per pane and reused on workspace restore
+  auto_attach: true    # attach existing session when available
+  passthrough: true    # allow shell metadata to pass through tmux when supported
+
 workspace_ai:
   model: none          # none | claude-sonnet-4-6 | gpt-4o | gemini-2.0-flash | ollama/llama3
                        # claude-cli: uses your Claude Code login, no API key needed
