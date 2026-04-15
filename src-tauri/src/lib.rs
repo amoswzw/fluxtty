@@ -112,10 +112,14 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(move |app_handle, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
-                // Prevent immediate exit so we can save the workspace gracefully
-                api.prevent_exit();
-                use tauri::Emitter;
-                let _ = app_handle.emit("app:request_exit", ());
+                if !IS_EXITING.load(std::sync::atomic::Ordering::SeqCst) {
+                    // Prevent immediate exit so we can save the workspace gracefully
+                    api.prevent_exit();
+                    use tauri::Emitter;
+                    let _ = app_handle.emit("app:request_exit", ());
+                }
             }
         });
 }
+
+pub static IS_EXITING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

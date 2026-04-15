@@ -1240,6 +1240,7 @@ pub async fn window_set_traffic_lights_hidden(
 /// Forcefully exits the Tauri application with code 0.
 #[tauri::command]
 pub async fn app_exit(app: tauri::AppHandle) -> Result<(), String> {
+    crate::IS_EXITING.store(true, std::sync::atomic::Ordering::SeqCst);
     app.exit(0);
     Ok(())
 }
