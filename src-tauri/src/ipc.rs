@@ -157,10 +157,29 @@ pub async fn pty_kill(
     app: AppHandle,
     pty_mgr: State<'_, SharedPtyManager>,
     session_mgr: State<'_, SharedSessionManager>,
+    config: State<'_, SharedConfig>,
 ) -> Result<(), String> {
+    // Snapshot the tmux session name + tmux config BEFORE we drop the PTY,
+    // so we can `tmux kill-session` the underlying tmux session too.
+    // Closing a pane in fluxtty is meant to destroy the work for real, not
+    // just detach our client and leave the session resurrectable on next launch.
+    let tmux_session = {
+        let session = session_mgr.lock().unwrap();
+        session.get_pane(pane_id).and_then(|p| p.tmux_session.clone())
+    };
+    let tmux_cfg = {
+        let cfg = config.lock().unwrap();
+        cfg.tmux.clone()
+    };
+
     {
         let mut pty = pty_mgr.lock().unwrap();
         pty.kill(pane_id);
+    }
+    if tmux_cfg.enabled {
+        if let Some(name) = tmux_session {
+            crate::pty::kill_tmux_session(&tmux_cfg, &name);
+        }
     }
     {
         let mut session = session_mgr.lock().unwrap();
@@ -1199,6 +1218,88 @@ pub async fn workspace_snapshot_load(
             Ok(None)
         }
     }
+}
+
+// ── tmux discovery ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TmuxDiscoveredSession {
+    pub name: String,
+    pub created: i64,
+    pub path: String,
+    pub attached: bool,
+}
+
+/// List tmux sessions whose names start with the configured template's literal
+/// prefix. Returns empty (never error) when tmux is disabled or unavailable.
+#[tauri::command]
+pub async fn tmux_list_sessions(
+    config: State<'_, SharedConfig>,
+) -> Result<Vec<TmuxDiscoveredSession>, String> {
+    let (enabled, program, extra_args, prefix) = {
+        let cfg = config.lock().unwrap();
+        if !cfg.tmux.enabled {
+            return Ok(Vec::new());
+        }
+        (
+            cfg.tmux.enabled,
+            cfg.tmux.program.clone(),
+            cfg.tmux.extra_args.clone(),
+            crate::config::tmux_session_prefix(&cfg.tmux.session),
+        )
+    };
+    if !enabled || prefix.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let program = match crate::pty::resolve_tmux_program(&program) {
+        Ok(p) => p,
+        Err(e) => {
+            log::info!("tmux discovery skipped: {}", e);
+            return Ok(Vec::new());
+        }
+    };
+
+    let mut cmd = std::process::Command::new(&program);
+    for arg in &extra_args {
+        cmd.arg(arg);
+    }
+    cmd.arg("list-sessions").arg("-F").arg(
+        "#{session_name}\t#{session_created}\t#{session_attached}\t#{session_path}",
+    );
+
+    let output = match cmd.output() {
+        Ok(o) => o,
+        Err(e) => {
+            log::info!("tmux list-sessions failed to spawn: {}", e);
+            return Ok(Vec::new());
+        }
+    };
+    if !output.status.success() {
+        // Non-zero exit usually means no server running / no sessions yet.
+        return Ok(Vec::new());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut sessions = Vec::new();
+    for line in stdout.lines() {
+        let mut parts = line.splitn(4, '\t');
+        let name = parts.next().unwrap_or("").to_string();
+        if name.is_empty() || !name.starts_with(&prefix) {
+            continue;
+        }
+        let created = parts.next().unwrap_or("0").parse::<i64>().unwrap_or(0);
+        let attached = parts.next().unwrap_or("0") != "0";
+        let path = parts.next().unwrap_or("").to_string();
+        sessions.push(TmuxDiscoveredSession {
+            name,
+            created,
+            path,
+            attached,
+        });
+    }
+    sessions.sort_by_key(|s| s.created);
+    Ok(sessions)
 }
 
 // ── Window chrome ──────────────────────────────────────────────────────────────────────────────

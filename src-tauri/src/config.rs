@@ -3,7 +3,32 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-const DEFAULT_TMUX_SESSION_TEMPLATE: &str = "fluxtty-{cwd_name}-{short_id}";
+// Dev builds get a `-dev-` prefix and separate snapshot file so they never
+// pick up release-build sessions during tmux discovery (and vice versa).
+fn default_tmux_session_template() -> String {
+    if cfg!(debug_assertions) {
+        "fluxtty-dev-{cwd_name}-{short_id}".to_string()
+    } else {
+        "fluxtty-{cwd_name}-{short_id}".to_string()
+    }
+}
+
+fn default_disk_state_path() -> String {
+    if cfg!(debug_assertions) {
+        "~/.local/share/fluxtty/workspace.dev.json".to_string()
+    } else {
+        "~/.local/share/fluxtty/workspace.json".to_string()
+    }
+}
+
+/// Literal prefix from a tmux session template (everything before the first
+/// `{placeholder}`), used to filter discovered sessions by build flavor.
+pub fn tmux_session_prefix(template: &str) -> String {
+    match template.find('{') {
+        Some(idx) => template[..idx].to_string(),
+        None => template.to_string(),
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -401,7 +426,7 @@ impl Default for TmuxConfig {
         TmuxConfig {
             enabled: false,
             program: "tmux".to_string(),
-            session: DEFAULT_TMUX_SESSION_TEMPLATE.to_string(),
+            session: default_tmux_session_template(),
             auto_attach: true,
             passthrough: true,
             extra_args: vec!["-u".to_string()],
@@ -465,7 +490,7 @@ impl Default for PersistenceConfig {
     fn default() -> Self {
         PersistenceConfig {
             restore_workspace_on_launch: true,
-            disk_state_path: "~/.local/share/fluxtty/workspace.json".to_string(),
+            disk_state_path: default_disk_state_path(),
             scrollback_lines: 5000,
             save_scrollback_on_exit: true,
         }
@@ -609,9 +634,24 @@ persistence:
         let cfg: Config = serde_yaml::from_str("{}").unwrap();
         assert!(!cfg.tmux.enabled);
         assert_eq!(cfg.tmux.program, "tmux");
-        assert_eq!(cfg.tmux.session, "fluxtty-{cwd_name}-{short_id}");
+        // Template differs between debug/release builds so that dev and prod
+        // discovery never see each other's sessions.
+        let expected = if cfg!(debug_assertions) {
+            "fluxtty-dev-{cwd_name}-{short_id}"
+        } else {
+            "fluxtty-{cwd_name}-{short_id}"
+        };
+        assert_eq!(cfg.tmux.session, expected);
         assert!(cfg.tmux.auto_attach);
         assert!(cfg.tmux.passthrough);
+    }
+
+    #[test]
+    fn tmux_session_prefix_strips_at_first_placeholder() {
+        assert_eq!(tmux_session_prefix("fluxtty-{cwd_name}-{short_id}"), "fluxtty-");
+        assert_eq!(tmux_session_prefix("fluxtty-dev-{cwd_name}-{short_id}"), "fluxtty-dev-");
+        assert_eq!(tmux_session_prefix("static-name"), "static-name");
+        assert_eq!(tmux_session_prefix(""), "");
     }
 
     #[test]

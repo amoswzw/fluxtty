@@ -584,7 +584,7 @@ export class WaterfallArea {
     return this.rowEls[rowIndex];
   }
 
-  async spawnPane(opts: { newRow: boolean; group?: string; cwd?: string; tmuxSession?: string | null; targetRow?: number; afterPaneId?: number }): Promise<TerminalPane | null> {
+  async spawnPane(opts: { newRow: boolean; group?: string; cwd?: string; tmuxSession?: string | null; targetRow?: number; afterPaneId?: number; atBottom?: boolean }): Promise<TerminalPane | null> {
     const paneId = this.nextPaneId++;
 
     // Inherit cwd from active pane for both new terminals and splits (unless explicitly overridden)
@@ -593,9 +593,13 @@ export class WaterfallArea {
     let row: HTMLElement;
     let targetRowIndex: number;
     if (opts.newRow) {
-      // Insert new row immediately after the active pane's row
-      const activeRowIdx = this.getActivePaneRowIndex();
-      row = this.insertRowAfter(activeRowIdx);
+      // Either append at the very bottom (used by tmux discovery to keep
+      // discovered sessions below the restored workspace) or insert immediately
+      // after the active pane's row (default behavior for `n` / Ctrl+N).
+      const afterRowIdx = opts.atBottom
+        ? this.rowEls.length - 1
+        : this.getActivePaneRowIndex();
+      row = this.insertRowAfter(afterRowIdx);
       targetRowIndex = this.rowEls.indexOf(row);
     } else {
       targetRowIndex = opts.targetRow ?? Math.max(0, this.rowEls.length - 1);

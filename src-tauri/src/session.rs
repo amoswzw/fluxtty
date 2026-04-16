@@ -166,6 +166,10 @@ impl SessionManager {
         panes
     }
 
+    pub fn get_pane(&self, id: u32) -> Option<&PaneInfo> {
+        self.panes.get(&id)
+    }
+
     pub fn layout(&self) -> &WorkspaceLayout {
         &self.layout
     }

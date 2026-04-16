@@ -105,6 +105,7 @@ pub fn run() {
             llm_complete,
             workspace_snapshot_save,
             workspace_snapshot_load,
+            tmux_list_sessions,
             window_set_traffic_lights_hidden,
             app_exit,
         ])

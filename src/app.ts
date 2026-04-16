@@ -32,6 +32,13 @@ interface WorkspaceSnapshot {
   panes: PaneSnapshot[];
 }
 
+interface TmuxDiscoveredSession {
+  name: string;
+  created: number;
+  path: string;
+  attached: boolean;
+}
+
 export async function initApp(root: HTMLElement) {
   // Detect platform and tag <html> so CSS can apply platform-specific rules
   const ua = navigator.userAgent;
@@ -199,6 +206,7 @@ export async function initApp(root: HTMLElement) {
 
   // ── Persistence: restore snapshot or spawn a fresh pane ─────────────────
   let restored = false;
+  const restoredSessions = new Set<string>();
   if (configContext.get().persistence.restore_workspace_on_launch) {
     try {
       const snapshot = await transport.send<WorkspaceSnapshot | null>('workspace_snapshot_load');
@@ -206,6 +214,9 @@ export async function initApp(root: HTMLElement) {
       if (snapshot && snapshot.panes.length > 0) {
         await restoreSnapshot(snapshot, waterfallArea);
         restored = true;
+        for (const p of snapshot.panes) {
+          if (p.tmux_session) restoredSessions.add(p.tmux_session);
+        }
         console.log('[restore] done, panes:', snapshot.panes.length);
       }
     } catch (e) {
@@ -214,8 +225,51 @@ export async function initApp(root: HTMLElement) {
   } else {
     console.log('[restore] skipped: restore_workspace_on_launch=false');
   }
-  if (!restored) {
+
+  // Discovery: attach to live tmux sessions not in the snapshot. Multi-client
+  // attach is allowed; another fluxtty mirroring the session is by design.
+  let discoveredCount = 0;
+  if (configContext.get().tmux.enabled) {
+    try {
+      const discovered = await transport.send<TmuxDiscoveredSession[]>('tmux_list_sessions');
+      const extras = discovered.filter(s => !restoredSessions.has(s.name));
+      console.log(`[discover] tmux returned ${discovered.length} sessions, ${extras.length} not in snapshot`);
+      for (const s of extras) {
+        const pane = await waterfallArea.spawnPane({
+          newRow: true,
+          atBottom: true,
+          tmuxSession: s.name,
+          cwd: s.path || undefined,
+        });
+        if (pane) discoveredCount++;
+      }
+    } catch (e) {
+      console.error('[discover] tmux_list_sessions failed:', e);
+    }
+  }
+
+  if (!restored && discoveredCount === 0) {
     await waterfallArea.spawnPane({ newRow: true });
+  }
+
+  // Live snapshot save: without this, a second fluxtty instance opened
+  // mid-session would only see the last on-exit snapshot, not current state.
+  if (configContext.get().persistence.restore_workspace_on_launch) {
+    let saveTimer: ReturnType<typeof setTimeout> | null = null;
+    sessionManager.onChange(() => {
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        saveTimer = null;
+        try {
+          const snapshot = buildSnapshot(waterfallArea);
+          void transport.send('workspace_snapshot_save', { snapshot }).catch((e) => {
+            console.error('[snapshot] live save failed:', e);
+          });
+        } catch (e) {
+          console.error('[snapshot] live save build failed:', e);
+        }
+      }, 500);
+    });
   }
 
   // Ensure AI input bar has focus after everything loads.
@@ -287,8 +341,12 @@ async function restoreSnapshot(snapshot: WorkspaceSnapshot, waterfallArea: Water
     }
 
     console.log(`[restore] spawning pane row=${snap.row_index} isNewRow=${isNewRow} cwd=${snap.cwd}`);
+    // atBottom for newRow: snapshot iterates in row_index order, so each new
+    // row should append to the end. Using getActivePaneRowIndex() races with
+    // the async setActivePane IPC and shuffles row order.
     const pane = await waterfallArea.spawnPane({
       newRow: isNewRow,
+      atBottom: isNewRow,
       cwd: snap.cwd,
       group: snap.group,
       tmuxSession: snap.tmux_session ?? null,

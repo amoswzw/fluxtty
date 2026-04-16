@@ -466,7 +466,29 @@ fn sanitize_tmux_session_name(name: &str) -> String {
 ///
 /// Returns `Err` with an actionable install hint when tmux cannot be found,
 /// so callers can surface it to the user before attempting to spawn.
-fn resolve_tmux_program(configured: &str) -> Result<String, String> {
+/// Kill a tmux session by name, best-effort. Logs and swallows errors —
+/// callers want pane teardown to proceed even if tmux is gone.
+pub fn kill_tmux_session(tmux: &TmuxConfig, session_name: &str) {
+    let program = match resolve_tmux_program(&tmux.program) {
+        Ok(p) => p,
+        Err(e) => {
+            log::warn!("kill_tmux_session({}): {}", session_name, e);
+            return;
+        }
+    };
+    let mut cmd = std::process::Command::new(&program);
+    for arg in &tmux.extra_args {
+        cmd.arg(arg);
+    }
+    cmd.arg("kill-session").arg("-t").arg(session_name);
+    match cmd.status() {
+        Ok(s) if s.success() => log::info!("Killed tmux session {}", session_name),
+        Ok(s) => log::info!("tmux kill-session {} exited {}", session_name, s),
+        Err(e) => log::warn!("tmux kill-session {} failed: {}", session_name, e),
+    }
+}
+
+pub fn resolve_tmux_program(configured: &str) -> Result<String, String> {
     if !configured.trim().is_empty() {
         return Ok(configured.to_string());
     }
@@ -974,7 +996,19 @@ mod tests {
     fn test_default_tmux_session_template_does_not_use_pane_id() {
         let tmux = TmuxConfig::default();
         let name = resolve_tmux_session_name(&tmux, None, 42, "/Users/alice/project");
-        assert!(name.starts_with("fluxtty-project-"));
+        // Prefix differs between debug (`fluxtty-dev-`) and release (`fluxtty-`)
+        // to keep dev and prod tmux discovery isolated. Match either.
+        let expected_prefix = if cfg!(debug_assertions) {
+            "fluxtty-dev-project-"
+        } else {
+            "fluxtty-project-"
+        };
+        assert!(
+            name.starts_with(expected_prefix),
+            "name {:?} did not start with {:?}",
+            name,
+            expected_prefix
+        );
         assert!(!name.contains("42"));
     }
 
