@@ -1,119 +1,59 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="fluxtty terminal icon">
   <defs>
-    <!-- Background gradient: very dark, slight blue tint -->
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0d1117"/>
-      <stop offset="100%" stop-color="#161b22"/>
+    <linearGradient id="screen-bg" x1="54" y1="58" x2="458" y2="454" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1A222C"/>
+      <stop offset="0.54" stop-color="#0D1117"/>
+      <stop offset="1" stop-color="#07090D"/>
     </linearGradient>
 
-    <!-- Cyan glow for the prompt symbol -->
-    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="6" result="blur"/>
-      <feMerge>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
+    <linearGradient id="header-bg" x1="68" y1="70" x2="444" y2="136" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#202B36"/>
+      <stop offset="1" stop-color="#14191F"/>
+    </linearGradient>
+
+    <linearGradient id="f-fill" x1="126" y1="142" x2="390" y2="390" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8FB9F0"/>
+      <stop offset="0.52" stop-color="#4C95DC"/>
+      <stop offset="1" stop-color="#36B3C0"/>
+    </linearGradient>
+
+    <linearGradient id="f-highlight" x1="142" y1="154" x2="350" y2="210" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E6EDF3" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#E6EDF3" stop-opacity="0"/>
+    </linearGradient>
+
+    <filter id="panel-depth" x="-16%" y="-16%" width="132%" height="136%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000000" flood-opacity="0.38"/>
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#388BFD" flood-opacity="0.12"/>
     </filter>
 
-    <!-- Subtle inner shadow for panes -->
-    <filter id="pane-shadow" x="-5%" y="-5%" width="110%" height="110%">
-      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000000" flood-opacity="0.4"/>
+    <filter id="f-depth" x="-12%" y="-12%" width="124%" height="124%">
+      <feDropShadow dx="0" dy="8" stdDeviation="6" flood-color="#000000" flood-opacity="0.28"/>
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#39C5CF" flood-opacity="0.16"/>
     </filter>
   </defs>
 
-  <!-- Rounded square background -->
-  <rect width="512" height="512" rx="112" ry="112" fill="url(#bg)"/>
+  <g filter="url(#panel-depth)">
+    <rect x="48" y="60" width="416" height="388" rx="46" fill="url(#screen-bg)" stroke="#686E75" stroke-width="5" opacity="0.97"/>
+    <rect x="58" y="70" width="396" height="368" rx="38" fill="none" stroke="#E6EDF3" stroke-width="2" opacity="0.05"/>
+    <path d="M48 106C48 80.6 68.6 60 94 60H418C443.4 60 464 80.6 464 106V136H48Z" fill="url(#header-bg)"/>
+    <path d="M50.5 136H461.5" stroke="#30363D" stroke-width="5"/>
+  </g>
 
-  <!-- Subtle border -->
-  <rect width="512" height="512" rx="112" ry="112" fill="none"
-        stroke="#30363d" stroke-width="2"/>
+  <g opacity="0.86">
+    <path d="M92 91L120 106L92 121V109L107 106L92 103Z" fill="#39C5CF"/>
+    <rect x="140" y="100" width="46" height="12" rx="6" fill="#388BFD" opacity="0.76"/>
+    <rect x="206" y="94" width="13" height="24" rx="6.5" fill="#E6EDF3" opacity="0.5"/>
+  </g>
 
-  <!-- ═══ Top row: two panes side by side ═══ -->
+  <g filter="url(#f-depth)" fill="url(#f-fill)" opacity="0.88">
+    <rect x="126" y="152" width="72" height="258" rx="14"/>
+    <rect x="190" y="152" width="176" height="68" rx="14"/>
+    <rect x="190" y="276" width="150" height="68" rx="14"/>
+  </g>
 
-  <!-- Pane 1 (top-left) -->
-  <rect x="52" y="72" width="192" height="130" rx="8" fill="#161b22" filter="url(#pane-shadow)"/>
-  <!-- header bar -->
-  <rect x="52" y="72" width="192" height="20" rx="8" fill="#21262d"/>
-  <rect x="52" y="84" width="192" height="8" rx="0" fill="#21262d"/>
-  <!-- status dot: running (green) -->
-  <circle cx="68" cy="82" r="4" fill="#3fb950"/>
-  <!-- pane name hint (tiny bars) -->
-  <rect x="78" y="79" width="40" height="6" rx="3" fill="#30363d"/>
-
-  <!-- content: code lines -->
-  <rect x="64" y="103" width="100" height="5" rx="2.5" fill="#388bfd" opacity="0.7"/>
-  <rect x="64" y="115" width="130" height="5" rx="2.5" fill="#e6edf3" opacity="0.25"/>
-  <rect x="64" y="127" width="80" height="5" rx="2.5" fill="#e6edf3" opacity="0.25"/>
-  <rect x="64" y="139" width="110" height="5" rx="2.5" fill="#3fb950" opacity="0.6"/>
-  <rect x="64" y="151" width="60" height="5" rx="2.5" fill="#e6edf3" opacity="0.25"/>
-  <!-- cursor block -->
-  <rect x="64" y="163" width="9" height="14" rx="1" fill="#39c5cf" opacity="0.9"/>
-
-  <!-- Pane 2 (top-right) -->
-  <rect x="260" y="72" width="200" height="130" rx="8" fill="#161b22" filter="url(#pane-shadow)"/>
-  <rect x="260" y="72" width="200" height="20" rx="8" fill="#21262d"/>
-  <rect x="260" y="84" width="200" height="8" rx="0" fill="#21262d"/>
-  <!-- status dot: idle (dim) -->
-  <circle cx="276" cy="82" r="4" fill="#484f58"/>
-  <rect x="286" y="79" width="50" height="6" rx="3" fill="#30363d"/>
-
-  <!-- content: log output lines -->
-  <rect x="272" y="103" width="90" height="5" rx="2.5" fill="#e6edf3" opacity="0.20"/>
-  <rect x="272" y="115" width="140" height="5" rx="2.5" fill="#e6edf3" opacity="0.20"/>
-  <rect x="272" y="127" width="110" height="5" rx="2.5" fill="#d29922" opacity="0.6"/>
-  <rect x="272" y="139" width="130" height="5" rx="2.5" fill="#e6edf3" opacity="0.20"/>
-  <rect x="272" y="151" width="75" height="5" rx="2.5" fill="#ff7b72" opacity="0.6"/>
-  <rect x="272" y="163" width="100" height="5" rx="2.5" fill="#e6edf3" opacity="0.15"/>
-
-  <!-- ═══ Middle row: full-width pane ═══ -->
-  <rect x="52" y="220" width="408" height="100" rx="8" fill="#161b22" filter="url(#pane-shadow)"/>
-  <rect x="52" y="220" width="408" height="20" rx="8" fill="#21262d"/>
-  <rect x="52" y="232" width="408" height="8" rx="0" fill="#21262d"/>
-  <!-- status dot: running (green) -->
-  <circle cx="68" cy="230" r="4" fill="#3fb950"/>
-  <rect x="78" y="227" width="60" height="6" rx="3" fill="#30363d"/>
-  <!-- agent badge hint -->
-  <rect x="368" y="226" width="80" height="8" rx="4" fill="#388bfd" opacity="0.25"/>
-  <rect x="374" y="228" width="68" height="4" rx="2" fill="#388bfd" opacity="0.5"/>
-
-  <!-- content: claude/agent session -->
-  <rect x="64" y="251" width="50" height="5" rx="2.5" fill="#bc8cff" opacity="0.8"/>
-  <rect x="120" y="251" width="180" height="5" rx="2.5" fill="#e6edf3" opacity="0.35"/>
-  <rect x="64" y="263" width="200" height="5" rx="2.5" fill="#e6edf3" opacity="0.20"/>
-  <rect x="64" y="275" width="140" height="5" rx="2.5" fill="#3fb950" opacity="0.5"/>
-  <rect x="64" y="287" width="250" height="5" rx="2.5" fill="#e6edf3" opacity="0.20"/>
-  <!-- blinking cursor -->
-  <rect x="64" y="299" width="9" height="14" rx="1" fill="#bc8cff" opacity="0.9"/>
-
-  <!-- ═══ Bottom row: two panes, smaller ═══ -->
-  <rect x="52" y="338" width="192" height="90" rx="8" fill="#161b22" filter="url(#pane-shadow)"/>
-  <rect x="52" y="338" width="192" height="20" rx="8" fill="#21262d"/>
-  <rect x="52" y="350" width="192" height="8" rx="0" fill="#21262d"/>
-  <circle cx="68" cy="348" r="4" fill="#484f58"/>
-  <rect x="78" y="345" width="45" height="6" rx="3" fill="#30363d"/>
-  <rect x="64" y="369" width="80" height="5" rx="2.5" fill="#39c5cf" opacity="0.5"/>
-  <rect x="64" y="381" width="120" height="5" rx="2.5" fill="#e6edf3" opacity="0.20"/>
-  <rect x="64" y="393" width="60" height="5" rx="2.5" fill="#e6edf3" opacity="0.20"/>
-  <rect x="64" y="408" width="9" height="12" rx="1" fill="#484f58" opacity="0.6"/>
-
-  <rect x="260" y="338" width="200" height="90" rx="8" fill="#161b22" filter="url(#pane-shadow)"/>
-  <rect x="260" y="338" width="200" height="20" rx="8" fill="#21262d"/>
-  <rect x="260" y="350" width="200" height="8" rx="0" fill="#21262d"/>
-  <circle cx="276" cy="348" r="4" fill="#3fb950"/>
-  <rect x="286" y="345" width="55" height="6" rx="3" fill="#30363d"/>
-  <rect x="272" y="369" width="120" height="5" rx="2.5" fill="#e6edf3" opacity="0.20"/>
-  <rect x="272" y="381" width="90" height="5" rx="2.5" fill="#3fb950" opacity="0.5"/>
-  <rect x="272" y="393" width="140" height="5" rx="2.5" fill="#e6edf3" opacity="0.15"/>
-  <rect x="272" y="408" width="9" height="12" rx="1" fill="#3fb950" opacity="0.7"/>
-
-  <!-- ═══ Bottom input bar ═══ -->
-  <rect x="52" y="446" width="408" height="32" rx="6" fill="#161b22"/>
-  <rect x="52" y="446" width="408" height="32" rx="6" fill="none" stroke="#30363d" stroke-width="1.5"/>
-  <!-- mode indicator: INSERT -->
-  <rect x="60" y="453" width="60" height="18" rx="4" fill="#3fb950" opacity="0.15"/>
-  <rect x="64" y="457" width="52" height="10" rx="2" fill="#3fb950" opacity="0.6"/>
-  <!-- prompt text hint -->
-  <rect x="132" y="457" width="180" height="10" rx="2" fill="#e6edf3" opacity="0.15"/>
-  <!-- cursor in input bar -->
-  <rect x="318" y="456" width="7" height="12" rx="1" fill="#39c5cf" opacity="0.85"/>
+  <g fill="url(#f-highlight)" opacity="0.68">
+    <rect x="138" y="162" width="48" height="104" rx="11"/>
+    <rect x="202" y="162" width="132" height="23" rx="10"/>
+  </g>
 </svg>
