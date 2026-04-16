@@ -1,50 +1,60 @@
 # fluxtty
 
 <p align="center">
-  <img src="src-tauri/icons/icon.png" width="128" height="128" alt="fluxtty" />
+  <img src="src-tauri/icons/icon.png" width="112" height="112" alt="fluxtty" />
 </p>
 
-<p align="center">
-  <strong>A vim-modal terminal for AI development.</strong>
-</p>
+<h3 align="center">A vim-modal terminal workspace for AI development.</h3>
 
 <p align="center">
-  A keyboard-driven terminal workspace with vim-modal input — built for developers supervising many concurrent AI agents.<br />
-  Navigate panes with <code>hjkl</code>, send commands in Insert mode, dispatch to your workspace AI — all without touching the mouse.
+  You don't just write code anymore — you supervise agents.<br/>
+  fluxtty is a keyboard-driven workspace for running many AI sessions in parallel,<br/>
+  with the modal efficiency that made vim indispensable.
 </p>
 
 <p align="center">
   <a href="https://github.com/amoswzw/fluxtty/actions/workflows/ci.yml"><img src="https://github.com/amoswzw/fluxtty/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://github.com/amoswzw/fluxtty/actions/workflows/codeql.yml"><img src="https://github.com/amoswzw/fluxtty/actions/workflows/codeql.yml/badge.svg" alt="CodeQL" /></a>
-  <a href="https://github.com/amoswzw/fluxtty/releases"><img src="https://img.shields.io/github/v/release/amoswzw/fluxtty" alt="Release" /></a>
-  <img src="https://img.shields.io/badge/license-MIT-blue" alt="License" />
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey" alt="Platform" />
-  <img src="https://img.shields.io/badge/Tauri-2.x-orange" alt="Tauri" />
-  <img src="https://img.shields.io/badge/Rust-1.77%2B-orange" alt="Rust" />
+  <a href="https://github.com/amoswzw/fluxtty/releases/latest"><img src="https://img.shields.io/github/v/release/amoswzw/fluxtty" alt="Release" /></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-2f363d" alt="Platform" />
+  <img src="https://img.shields.io/badge/Tauri-2.x-24b47e" alt="Tauri" />
+  <img src="https://img.shields.io/badge/license-MIT-4f8cff" alt="License" />
 </p>
 
 <p align="center">
-  <a href="https://amoswzw.github.io/fluxtty/"><strong>Live demo and landing page →</strong></a>
+  <a href="https://amoswzw.github.io/fluxtty/"><strong>Live demo →</strong></a>
+  &nbsp;&nbsp;·&nbsp;&nbsp;
+  <a href="https://github.com/amoswzw/fluxtty/releases/latest"><strong>Download latest release</strong></a>
 </p>
 
-<video src="https://github.com/user-attachments/assets/6b9ba19d-14c2-43d3-8e6a-6d3353674bb6" controls autoplay loop muted width="100%"></video>
+<p align="center">
+  <img src="docs/fluxtty-preview.gif" width="100%" alt="fluxtty workspace preview" />
+</p>
 
----
+## The idea
 
-## Table of Contents
+When AI writes the code, your job shifts from typing to directing. You need a workspace built for that — not an editor with a terminal bolted on.
 
-- [Installation](#installation)
-- [The Problem](#the-problem)
-- [Features](#features)
-- [Configuration](#configuration)
-- [Keybindings](#keybindings)
-- [Contributing](#contributing)
+| Before | Now |
+| --- | --- |
+| Write code manually in an editor. | Agents write; you review, steer, and unblock. |
+| One terminal for the occasional command. | 8–12 sessions open in parallel: agents, servers, shells. |
+| Run tests yourself, read output, patch manually. | Monitor outputs, redirect agents, course-correct fast. |
+| Context-switch between editor, browser, terminal. | The terminal is the entire workspace. |
 
----
+fluxtty applies vim's modal philosophy to the whole terminal workspace:
 
-## Installation
+| Need | fluxtty answer |
+| --- | --- |
+| Watch many sessions at once | Waterfall rows keep all agents visible without squeezing into a tiny grid |
+| Move without touching the mouse | Normal mode: `h j k l` navigation, `/` fuzzy search, `n` new, `s` split, `q` close |
+| Type safely into any shell | Insert mode routes input to the active PTY — Normal mode never leaks keys into a running agent |
+| Use real terminal apps | Terminal mode gives xterm.js raw keyboard control for vim, htop, TUIs, and agent prompts |
+| Coordinate the workspace | Workspace AI can run, read, create, rename, group, pipeline, and dispatch across sessions |
 
-### Homebrew (macOS)
+## Install
+
+### Homebrew on macOS
 
 ```bash
 brew tap amoswzw/tap
@@ -53,18 +63,18 @@ brew install --cask fluxtty
 
 ### Download
 
-**[→ Download latest release](https://github.com/amoswzw/fluxtty/releases/latest)**
+**[Latest release](https://github.com/amoswzw/fluxtty/releases/latest)** — macOS, Linux, Windows
 
-| Platform | File |
-|---|---|
-| 🍎 macOS (Apple Silicon) | `fluxtty_*_aarch64.dmg` |
-| 🍎 macOS (Intel) | `fluxtty_*_x64.dmg` |
-| 🐧 Linux | `fluxtty_*_amd64.deb` · `.rpm` · `.AppImage` |
-| 🪟 Windows | `fluxtty_*_x64-setup.exe` |
+| Platform | Package |
+| --- | --- |
+| macOS Apple Silicon | `fluxtty_*_aarch64.dmg` |
+| macOS Intel | `fluxtty_*_x64.dmg` |
+| Linux | `fluxtty_*_amd64.deb`, `.rpm`, `.AppImage` |
+| Windows | `fluxtty_*_x64-setup.exe` |
 
 ### Build from source
 
-**Prerequisites:** [Rust](https://rustup.rs/) 1.77+, [Node.js](https://nodejs.org/) 18+, [Tauri v2 prerequisites](https://tauri.app/start/prerequisites/)
+Prerequisites: [Rust](https://rustup.rs/) 1.77+, [Node.js](https://nodejs.org/) 18+, [Tauri v2 prerequisites](https://tauri.app/start/prerequisites/).
 
 ```bash
 git clone https://github.com/amoswzw/fluxtty
@@ -73,69 +83,71 @@ npm install
 npm run tauri build
 ```
 
-Built app is in `src-tauri/target/release/bundle/`.
-
 ```bash
 npm run tauri dev   # development
 ```
 
----
+## Modes
 
-## The Problem
+fluxtty has one persistent input bar with a small set of explicit modes:
 
-Modern AI-assisted development looks different from traditional coding. You have multiple `claude` sessions running in parallel, dev servers, test runners, database shells, and CI watchers all running at once. Your job is to supervise them — review outputs, redirect agents, intervene when things go wrong.
+| Mode | Enter | What happens |
+| --- | --- | --- |
+| **Normal** | default | Navigate panes and rows, scroll output, split, close, rename, search. No keystrokes reach the shell. |
+| **Insert** | `i` | Type into the active shell through the input bar. `Esc` returns to Normal. |
+| **AI** | `a` | Enter the Workspace AI prompt. Built-in parser with `model: none`; LLM-backed with any provider configured. |
+| **Terminal** | `Ctrl+\` | Raw terminal input. xterm.js owns the keyboard until `Ctrl+\` returns to Normal. |
+| **Find** | `/` | Fuzzy search across all panes by name, group, cwd, and status. |
+| **View** | `v` | Isolate the active row for focused watching. |
 
-The usual terminal workflow breaks down here. Alt-tabbing between windows is disorienting at scale. tmux panes get too small to be useful. The mouse is slow.
+`:` in Normal mode opens the same workspace command path inline.
 
-fluxtty applies vim's modal philosophy to this problem: a persistent view of all your terminals, and a modal input bar that knows the difference between navigating (`hjkl`), typing into a shell (`i`), and talking to your workspace AI (`a`). One window. Keyboard-first.
+## Workspace commands
 
----
+Built-in commands available when `workspace_ai.model: none`:
 
-## Features
-
-### 🗂️ Waterfall layout
-
-Terminal rows stack vertically; each row fills the viewport. Horizontal splits live within a row. Row heights recalculate on resize and sidebar toggle — always fills the screen.
-
-### ⌨️ Modal input bar
-
-The input bar sits at the bottom, always visible. Four modes modeled after vim:
-
-| Mode | Key | What keystrokes do |
-|---|---|---|
-| **Normal** | default | Navigate panes with `hjkl`, scroll output, open commands |
-| **Insert** | `i` | Send keystrokes directly to the active shell |
-| **AI** | `a` | Dispatch to the Workspace AI in natural language |
-| **Terminal** | `Ctrl+\` | Raw PTY — xterm owns the keyboard (TUI apps, vim, etc.) |
-| **Pane Selector** | `/` | Fuzzy-search over all open panes |
-
-### ✨ Workspace AI
-
-Press `a` to enter AI mode. Supports Claude, GPT, Gemini, Ollama, or a built-in regex parser with no model at all.
-
-```
-run <cmd> in <session>        new [name] [in <group>]
-<cmd> in all sessions         rename <session> to <name>
-run X then Y in <session>     close <session> | close idle
+```text
+run <cmd> in <session>
+run <cmd> in group <group>
+<cmd> in all sessions
+run X then run Y in <session>
+new [name] [in <group>]
+rename <session> to <name>
+close <session> | close idle | close group <group>
+split
+focus <session>
+group <session> as <group>
+note <session> <text>
+read <session>
+clear <session>
+kill <session>
+list | status | help
+!agent <claude|codex|aider|gemini|opencode|goose|cursor|qwen|amp|crush|openhands|none>
 ```
 
-Multi-step and broadcast actions show a plan preview and wait for `y` before executing.
+`list`, `status`, `help`, `read`, `focus`, and `!agent` execute immediately. All workspace-changing commands are queued through a plan confirmation step before running.
 
-### 👁️ Agent detection & auto-naming
+## Highlights
 
-Panes detect running agents (`claude`, `codex`, `aider`) from PTY output and show an agent badge. Tab in Insert mode completes that agent's slash commands.
+### Waterfall layout
 
-Pane names auto-update from `cwd` on spawn, then change to reflect what's running — `claude`, `cargo test`, `psql`, `ssh: prod`. Manual renames are pinned.
+Rows stack vertically; horizontal splits live inside a row. With few rows, fluxtty divides the space evenly. With many rows, each row becomes a full-height workspace slice you scroll through.
 
-### 🗃️ Session sidebar
+### Agent detection and completion
 
-`Ctrl+B` opens a grouped session tree with running/idle/error indicators. Click to jump to any pane.
+Detected agents: `claude`, `codex`, `aider`, `gemini`, `opencode`, `goose`, `cursor`, `qwen`, `amp`, `crush`, `openhands`. When a pane is running an agent, the mode indicator reflects it and Tab switches to that agent's slash-command completions.
 
-### ⚙️ Settings & config
+### Session identity and auto-naming
 
-`Ctrl+,` opens a settings panel (font, colors, keybindings, AI provider, terminal behaviour). All settings live in `~/.config/fluxtty/config.yaml` and hot-reload on save — no restart needed.
+Every pane tracks name, group, cwd, status, last command, exit code, tmux session, alternate-screen state, and agent type. New panes are named from cwd, then auto-renamed when significant commands take over. Manual renames stay pinned.
 
----
+### Row notes
+
+`m` opens a note pane for the active row — branch names, review reminders, agent intent. Notes are included in workspace restore snapshots.
+
+### Hot-reload config
+
+`~/.config/fluxtty/config.yaml` hot-reloads on save. Covers window, font, colors, cursor, shell, tmux, keybindings, input behavior, Workspace AI provider and model, waterfall sizing, persistence, and session defaults.
 
 ## Configuration
 
@@ -150,86 +162,59 @@ colors:
   primary:
     background: "#0d1117"
     foreground: "#e6edf3"
-  normal:
-    black: "#484f58"  red: "#ff7b72"  green: "#3fb950"  yellow: "#d29922"
-    blue:  "#388bfd"  magenta: "#bc8cff"  cyan: "#39c5cf"  white: "#b1bac4"
-  # theme: catppuccin-mocha | gruvbox-dark | solarized-dark
-
-cursor:
-  style: Block      # Block | Underline | Bar
-  blinking: true
 
 input:
-  live_typing: false   # true: each keystroke forwarded immediately
-
-tmux:
-  enabled: false       # true: new panes launch through tmux
-  session: "fluxtty-{cwd_name}-{short_id}"  # saved per pane and reused on workspace restore
-  auto_attach: true    # attach existing session when available
-  passthrough: true    # allow shell metadata to pass through tmux when supported
+  live_typing: true
 
 workspace_ai:
-  model: none          # none | claude-sonnet-4-6 | gpt-4o | gemini-2.0-flash | ollama/llama3
-                       # claude-cli: uses your Claude Code login, no API key needed
-  api_key_env: ANTHROPIC_API_KEY
+  model: none                    # or: claude-sonnet-4-6, gpt-4o, gemini-2.0-flash, ollama/llama3
   always_confirm_broadcast: true
   always_confirm_multi_step: true
 
 waterfall:
-  row_height_mode: viewport   # viewport | fixed
-  new_pane_focus: true
+  row_height_mode: viewport
+  scroll_snap: false
 ```
-
----
 
 ## Keybindings
 
-All bindings are configurable in `config.yaml`.
+| Key | Mode | Action |
+| --- | --- | --- |
+| `h` `j` `k` `l` | Normal | Move across panes and rows |
+| `i` | Normal, View | Insert mode for the active PTY |
+| `a` or `:` | Normal | Workspace AI / command prompt |
+| `/` | Normal | Fuzzy pane selector |
+| `v` | Normal | View mode for the active row |
+| `n` | Normal | New terminal row |
+| `s` | Normal | Split the active row |
+| `q` | Normal | Close the active pane |
+| `m` | Normal | Toggle the row note pane |
+| `r` | Normal | Rename the active pane |
+| `G` / `gg` | Normal | Jump to bottom / top of workspace |
+| `Ctrl+\` | Any | Toggle raw Terminal mode |
+| `Esc` | Insert, AI, Find, View | Return to Normal mode |
+| `Tab` | Insert | Shell completion or agent slash-command completion |
+| `Cmd+,` / `Ctrl+,` | Any | Open settings |
 
-### Essential — Normal mode
+## Development
 
-| Key | Action |
-|---|---|
-| `i` | Insert mode — type into the active shell |
-| `a` | AI mode — dispatch to Workspace AI |
-| `h` `j` `k` `l` | Navigate panes and rows |
-| `n` / `s` | New terminal / split row |
-| `q` | Close active pane |
-| `/` | Fuzzy pane search |
-| `r` | Rename pane |
-| `b` | Toggle sidebar |
-| `gg` / `G` | Jump workspace to top / bottom |
-| `Ctrl+D` / `Ctrl+U` | Scroll half page |
-
-### Global
-
-| Key | Action |
-|---|---|
-| `Ctrl+\` | Toggle Normal ↔ Terminal (raw PTY) |
-| `Ctrl+N` | New terminal |
-| `Ctrl+H` | Split row |
-| `Ctrl+B` | Toggle sidebar |
-| `Ctrl+,` | Settings |
-| `Ctrl+Shift+C` / `V` | Copy / Paste |
-| `Ctrl++` / `Ctrl+-` / `Ctrl+0` | Font size |
-| `Ctrl+Q` | Quit |
-
----
+```bash
+npm install
+npm run tauri dev    # dev with hot reload
+npm test
+npm run build
+npm run tauri build  # production bundle
+```
 
 ## Contributing
 
-Read [`CLAUDE.md`](./CLAUDE.md) before opening a pull request — it covers the core design decisions (layout model, modal input system, Workspace AI scope) that should be understood before making significant changes.
-
-Built with: [Tauri 2](https://tauri.app/) · [xterm.js 5](https://xtermjs.org/) · [portable-pty](https://github.com/wez/wezterm/tree/main/pty) · Rust + Tokio · Vanilla TypeScript + Vite
-
----
+Issues and pull requests are welcome. Keep changes focused, run the test suite, and include screenshots or recordings for UI behavior changes.
 
 ## Inspiration
 
 The waterfall layout idea — terminals stacking vertically, each filling the viewport as you scroll — was shamelessly stolen from [`infinite-scroll`](https://github.com/gaojude/infinite-scroll). I prefer the word "inspired."
 
 ---
-
 
 ## License
 

@@ -457,6 +457,49 @@ fn sanitize_tmux_session_name(name: &str) -> String {
     }
 }
 
+/// Resolve the tmux binary path.
+///
+/// Priority:
+///   1. Explicit path from config (`tmux.program`) — used as-is.
+///   2. Common well-known installation directories.
+///   3. `which tmux` — searches the user's PATH.
+///
+/// Returns `Err` with an actionable install hint when tmux cannot be found,
+/// so callers can surface it to the user before attempting to spawn.
+fn resolve_tmux_program(configured: &str) -> Result<String, String> {
+    if !configured.trim().is_empty() {
+        return Ok(configured.to_string());
+    }
+
+    // Check common fixed installation paths before falling back to PATH search.
+    let candidates = [
+        "/opt/homebrew/bin/tmux", // macOS Apple Silicon (Homebrew)
+        "/usr/local/bin/tmux",    // macOS Intel (Homebrew) / Linux custom install
+        "/usr/bin/tmux",          // Linux system package
+    ];
+    for path in candidates {
+        if std::path::Path::new(path).exists() {
+            return Ok(path.to_string());
+        }
+    }
+
+    // Fall back to PATH resolution via `which`.
+    if let Ok(output) = std::process::Command::new("which").arg("tmux").output() {
+        if output.status.success() {
+            if let Ok(found) = String::from_utf8(output.stdout) {
+                let found = found.trim().to_string();
+                if !found.is_empty() {
+                    return Ok(found);
+                }
+            }
+        }
+    }
+
+    Err(
+        "tmux not found. Install it first:\n  macOS:         brew install tmux\n  Ubuntu/Debian: sudo apt install tmux\n  Fedora/RHEL:   sudo dnf install tmux".to_string()
+    )
+}
+
 fn short_tmux_id() -> String {
     Uuid::new_v4()
         .simple()
@@ -587,11 +630,7 @@ impl PtyManager {
         let (program, command_args, tmux_session) = if tmux.enabled {
             let session_name =
                 resolve_tmux_session_name(tmux, requested_tmux_session, pane_id, cwd);
-            let tmux_program = if tmux.program.trim().is_empty() {
-                "tmux".to_string()
-            } else {
-                tmux.program.clone()
-            };
+            let tmux_program = resolve_tmux_program(&tmux.program)?;
             (
                 tmux_program,
                 build_tmux_args(tmux, &session_name, cwd, shell, args, &integration),
