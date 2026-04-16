@@ -45,6 +45,11 @@ export function getTerminalToggleHintText(): string {
   return 'Press `Ctrl+\\` to enter raw terminal input; press it again to return to `Normal`';
 }
 
+export function getInsertEscPassthroughHintText(context: 'agent' | 'tui'): string {
+  const what = context === 'agent' ? 'Agent' : 'TUI';
+  return `${what} detected — \`Esc\` exits to Normal. Use \`Ctrl+\\\` to enter Terminal mode if you need to send Esc to the shell`;
+}
+
 export function getWorkspaceScrollHintText(modifierLabel: string | null): string | null {
   if (!modifierLabel) return null;
   return `Hold \`${modifierLabel} + Wheel\` to scroll the workspace; the pane under the pointer becomes active`;

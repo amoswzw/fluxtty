@@ -1,13 +1,14 @@
 import { configContext } from '../config/ConfigContext';
 import { hasCompletedQuickStart } from '../help/OnboardingState';
 import {
+  getInsertEscPassthroughHintText,
   getNormalShortcutsHintText,
   getTerminalToggleHintText,
   getWorkspaceModifierLabel,
   getWorkspaceScrollHintText,
 } from '../help/helpContent';
 
-export type HintId = 'normal-shortcuts' | 'terminal-toggle' | 'workspace-scroll';
+export type HintId = 'normal-shortcuts' | 'terminal-toggle' | 'workspace-scroll' | 'insert-esc-passthrough';
 
 export interface ActiveHint {
   id: HintId;
@@ -19,7 +20,8 @@ type HintEvent =
   | { type: 'normal-shortcut-used'; key: string }
   | { type: 'terminal-toggle-used' }
   | { type: 'terminal-wheel'; withModifier: boolean }
-  | { type: 'workspace-scroll-used' };
+  | { type: 'workspace-scroll-used' }
+  | { type: 'insert-interactive-detected'; context: 'agent' | 'tui' };
 
 type HintListener = (hint: ActiveHint | null) => void;
 
@@ -91,6 +93,9 @@ export class HintManager {
         break;
       case 'workspace-scroll-used':
         this.markLearned('workspace-scroll');
+        break;
+      case 'insert-interactive-detected':
+        this.handleInsertInteractiveDetected(event.context);
         break;
     }
   }
@@ -232,6 +237,12 @@ export class HintManager {
       return;
     }
 
+    // User entered Terminal mode from Insert — they've learned how to handle
+    // the ESC passthrough situation, so mark the hint as learned.
+    if (mode === 'terminal' && prevMode === 'insert') {
+      this.markLearned('insert-esc-passthrough');
+    }
+
     if (mode === 'terminal' && prevMode !== 'terminal') {
       if (hasCompletedQuickStart()) return;
       this.showHint(
@@ -279,6 +290,15 @@ export class HintManager {
         20_000,
       );
     }
+  }
+
+  private handleInsertInteractiveDetected(context: 'agent' | 'tui') {
+    this.showHint(
+      'insert-esc-passthrough',
+      getInsertEscPassthroughHintText(context),
+      3,
+      60_000,
+    );
   }
 }
 

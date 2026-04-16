@@ -100,6 +100,9 @@ export class InputBar {
   private normalCommandActive = false;
   private lastModeType: InputMode['type'] | null = null;
 
+  // Insert mode: track pane context to detect agent/TUI transitions
+  private lastInsertContextKind: 'agent' | 'tui' | 'none' = 'none';
+
   constructor(container: HTMLElement) {
     this.el = document.createElement('div');
     this.el.className = 'input-bar-wrapper';
@@ -893,10 +896,16 @@ export class InputBar {
         ? 'mode-indicator mode-insert mode-insert-tui'
         : 'mode-indicator mode-insert';
 
+    // Show hint when context transitions to agent/tui (e.g. user launched vim or claude)
+    if ((context.kind === 'agent' || context.kind === 'tui') && this.lastInsertContextKind === 'none') {
+      hintManager.record({ type: 'insert-interactive-detected', context: context.kind });
+    }
+    this.lastInsertContextKind = context.kind;
+
     this.inputEl.placeholder = context.kind === 'agent'
-      ? `send to ${context.label}… (/ slash cmds, Tab complete, Esc normal)`
+      ? `send to ${context.label}… (Ctrl+\\ terminal mode, Esc normal)`
       : context.kind === 'tui'
-        ? 'TUI active… Ctrl+\\ for raw terminal keys, Esc normal'
+        ? 'TUI active — Ctrl+\\ for terminal mode (sends Esc to shell), Esc normal'
       : busy
         ? 'running… (Ctrl+C interrupt, Esc normal)'
         : 'shell input… (Tab complete, Esc normal)';
@@ -926,6 +935,11 @@ export class InputBar {
     if (mode.type !== 'normal' && this.normalCommandActive) {
       this.normalCommandActive = false;
       this.inputEl.value = '';
+    }
+
+    // Reset context tracking when leaving Insert so the hint can re-trigger
+    if (prevMode === 'insert' && mode.type !== 'insert') {
+      this.lastInsertContextKind = 'none';
     }
 
     switch (mode.type) {
