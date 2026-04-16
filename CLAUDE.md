@@ -393,7 +393,6 @@ input:
 keybindings:
   - { key: N,         mods: Control,       action: NewTerminal }
   - { key: H,         mods: Control,       action: SplitHorizontal }
-  - { key: W,         mods: Control,       action: ClosePane }
   - { key: B,         mods: Control,       action: ToggleSidebar }
   - { key: Up,        mods: Control,       action: FocusPrevRow }
   - { key: Down,      mods: Control,       action: FocusNextRow }

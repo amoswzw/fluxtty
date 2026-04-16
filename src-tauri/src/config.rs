@@ -414,7 +414,6 @@ fn default_keybindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding { key: "N".to_string(), mods: Some("Control".to_string()), action: "NewTerminal".to_string() },
         KeyBinding { key: "H".to_string(), mods: Some("Control".to_string()), action: "SplitHorizontal".to_string() },
-        KeyBinding { key: "W".to_string(), mods: Some("Control".to_string()), action: "ClosePane".to_string() },
         KeyBinding { key: "B".to_string(), mods: Some("Control".to_string()), action: "ToggleSidebar".to_string() },
         KeyBinding { key: "\\".to_string(), mods: Some("Control".to_string()), action: "ToggleInputMode".to_string() },
         KeyBinding { key: ",".to_string(), mods: Some(settings_mod.to_string()), action: "OpenSettings".to_string() },
