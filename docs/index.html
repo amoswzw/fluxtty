@@ -2,14 +2,147 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>fluxtty - Vim-modal terminal workspace for AI development</title>
-  <meta name="description" content="A keyboard-driven terminal workspace with waterfall rows, vim-style modes, session identity, agent detection, row notes, and workspace command dispatch." />
-  <meta property="og:title" content="fluxtty - Vim-modal terminal workspace" />
-  <meta property="og:description" content="A waterfall terminal workspace with vim-style modes, session identity, agent detection, notes, and workspace AI dispatch." />
-  <meta property="og:type" content="website" />
-  <meta property="og:image" content="https://amoswzw.github.io/fluxtty/icon.png" />
+  <meta name="description" content="fluxtty is a keyboard-driven terminal workspace for supervising AI coding agents with vim-style modes, waterfall rows, session identity, notes, and workspace commands." />
+  <meta name="keywords" content="fluxtty, AI terminal, AI coding agent workspace, vim modal terminal, Tauri terminal, xterm.js, multi session terminal, agent supervision, developer tools" />
+  <meta name="author" content="amoswzw" />
+  <meta name="application-name" content="fluxtty" />
+  <meta name="theme-color" content="#07090d" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+  <meta name="googlebot" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+  <link rel="canonical" href="https://amoswzw.github.io/fluxtty/" />
   <link rel="icon" href="icon.png" />
+  <link rel="apple-touch-icon" href="icon.png" />
+  <link rel="manifest" href="site.webmanifest" />
+  <link rel="sitemap" type="application/xml" href="sitemap.xml" />
+  <link rel="alternate" type="text/plain" title="llms.txt" href="llms.txt" />
+  <link rel="alternate" type="text/plain" title="Full AI-readable project brief" href="llms-full.txt" />
+  <link rel="alternate" type="application/json" title="Machine-readable project metadata" href="project.json" />
+  <meta property="og:title" content="fluxtty - Vim-modal terminal workspace for AI development" />
+  <meta property="og:description" content="A keyboard-driven terminal workspace for supervising AI coding agents with waterfall rows, vim-style modes, session identity, row notes, and workspace command dispatch." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://amoswzw.github.io/fluxtty/" />
+  <meta property="og:site_name" content="fluxtty" />
+  <meta property="og:locale" content="en_US" />
+  <meta property="og:image" content="https://amoswzw.github.io/fluxtty/og-image.png" />
+  <meta property="og:image:secure_url" content="https://amoswzw.github.io/fluxtty/og-image.png" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="fluxtty waterfall terminal workspace preview" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="fluxtty - Vim-modal terminal workspace for AI development" />
+  <meta name="twitter:description" content="Supervise many AI coding agents from a keyboard-driven terminal workspace with vim-style modes, waterfall rows, session identity, notes, and workspace commands." />
+  <meta name="twitter:image" content="https://amoswzw.github.io/fluxtty/og-image.png" />
+  <meta name="twitter:image:alt" content="fluxtty waterfall terminal workspace preview" />
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Person",
+          "@id": "https://amoswzw.github.io/fluxtty/#creator",
+          "name": "amoswzw",
+          "url": "https://github.com/amoswzw"
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://amoswzw.github.io/fluxtty/#website",
+          "name": "fluxtty",
+          "url": "https://amoswzw.github.io/fluxtty/",
+          "description": "A vim-modal terminal workspace for AI development.",
+          "inLanguage": "en",
+          "publisher": {
+            "@id": "https://amoswzw.github.io/fluxtty/#creator"
+          }
+        },
+        {
+          "@type": "WebPage",
+          "@id": "https://amoswzw.github.io/fluxtty/#webpage",
+          "url": "https://amoswzw.github.io/fluxtty/",
+          "name": "fluxtty - Vim-modal terminal workspace for AI development",
+          "description": "fluxtty is a keyboard-driven terminal workspace for supervising AI coding agents with vim-style modes, waterfall rows, session identity, notes, and workspace commands.",
+          "isPartOf": {
+            "@id": "https://amoswzw.github.io/fluxtty/#website"
+          },
+          "about": {
+            "@id": "https://amoswzw.github.io/fluxtty/#software"
+          },
+          "primaryImageOfPage": {
+            "@type": "ImageObject",
+            "url": "https://amoswzw.github.io/fluxtty/og-image.png",
+            "width": 1200,
+            "height": 630
+          },
+          "dateModified": "2026-04-17",
+          "inLanguage": "en"
+        },
+        {
+          "@type": "SoftwareApplication",
+          "@id": "https://amoswzw.github.io/fluxtty/#software",
+          "name": "fluxtty",
+          "url": "https://amoswzw.github.io/fluxtty/",
+          "downloadUrl": "https://github.com/amoswzw/fluxtty/releases/latest",
+          "codeRepository": "https://github.com/amoswzw/fluxtty",
+          "license": "https://github.com/amoswzw/fluxtty/blob/main/LICENSE",
+          "image": "https://amoswzw.github.io/fluxtty/icon.png",
+          "screenshot": "https://amoswzw.github.io/fluxtty/og-image.png",
+          "description": "A keyboard-driven terminal workspace for supervising AI coding agents with vim-style modes, waterfall rows, session identity, notes, and workspace command dispatch.",
+          "applicationCategory": "DeveloperApplication",
+          "applicationSubCategory": "Terminal emulator and AI coding agent workspace",
+          "operatingSystem": [
+            "macOS",
+            "Linux",
+            "Windows"
+          ],
+          "programmingLanguage": [
+            "TypeScript",
+            "Rust"
+          ],
+          "softwareRequirements": [
+            "Tauri 2",
+            "xterm.js",
+            "portable-pty",
+            "Node.js 18+",
+            "Rust 1.77+"
+          ],
+          "keywords": [
+            "AI terminal",
+            "AI coding agent workspace",
+            "vim modal terminal",
+            "waterfall terminal",
+            "Tauri terminal",
+            "xterm.js",
+            "developer productivity"
+          ],
+          "featureList": [
+            "Waterfall terminal rows for many concurrent sessions",
+            "Vim-style Normal, Insert, AI, Terminal, Find, and View modes",
+            "Workspace command dispatch across sessions and groups",
+            "AI agent detection for claude, codex, aider, gemini, opencode, goose, cursor, qwen, amp, crush, and openhands",
+            "Session identity with name, group, cwd, status, last command, exit code, tmux session, alternate-screen state, and agent type",
+            "Row notes and restore snapshots",
+            "Hot-reload YAML configuration"
+          ],
+          "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "USD",
+            "url": "https://github.com/amoswzw/fluxtty/releases/latest"
+          },
+          "maintainer": {
+            "@id": "https://amoswzw.github.io/fluxtty/#creator"
+          },
+          "sameAs": [
+            "https://github.com/amoswzw/fluxtty"
+          ]
+        }
+      ]
+    }
+  </script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1361,6 +1494,8 @@ workspace_ai:
         <a href="https://github.com/amoswzw/fluxtty/releases/latest">Latest release</a>
         <a href="https://github.com/amoswzw/fluxtty/blob/main/CONTRIBUTING.md">Contributing</a>
         <a href="https://github.com/amoswzw/fluxtty/blob/main/LICENSE">MIT License</a>
+        <a href="llms.txt">llms.txt</a>
+        <a href="sitemap.xml">Sitemap</a>
       </div>
       <p>Tauri 2 · xterm.js · portable-pty · Rust · TypeScript · Vite</p>
     </footer>

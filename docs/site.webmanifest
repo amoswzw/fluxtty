@@ -1,0 +1,23 @@
+{
+  "name": "fluxtty",
+  "short_name": "fluxtty",
+  "description": "A vim-modal terminal workspace for supervising AI coding agents.",
+  "start_url": "/fluxtty/",
+  "scope": "/fluxtty/",
+  "display": "standalone",
+  "background_color": "#07090d",
+  "theme_color": "#07090d",
+  "categories": [
+    "developer",
+    "productivity",
+    "utilities"
+  ],
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

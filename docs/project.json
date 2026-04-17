@@ -1,0 +1,66 @@
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "fluxtty",
+  "url": "https://amoswzw.github.io/fluxtty/",
+  "codeRepository": "https://github.com/amoswzw/fluxtty",
+  "downloadUrl": "https://github.com/amoswzw/fluxtty/releases/latest",
+  "license": "https://github.com/amoswzw/fluxtty/blob/main/LICENSE",
+  "description": "fluxtty is a keyboard-driven terminal workspace for supervising AI coding agents with vim-style modes, waterfall rows, session identity, row notes, and workspace command dispatch.",
+  "applicationCategory": "DeveloperApplication",
+  "applicationSubCategory": "Terminal emulator and AI coding agent workspace",
+  "operatingSystem": [
+    "macOS",
+    "Linux",
+    "Windows"
+  ],
+  "programmingLanguage": [
+    "TypeScript",
+    "Rust"
+  ],
+  "runtimePlatform": [
+    "Tauri 2",
+    "xterm.js",
+    "portable-pty",
+    "Vite"
+  ],
+  "keywords": [
+    "AI terminal",
+    "AI coding agent workspace",
+    "vim modal terminal",
+    "waterfall terminal",
+    "multi-session terminal",
+    "Tauri terminal",
+    "xterm.js",
+    "developer tools"
+  ],
+  "featureList": [
+    "Waterfall terminal rows for supervising many sessions at once",
+    "Vim-style Normal, Insert, AI, Terminal, Find, and View modes",
+    "Workspace command dispatch across sessions and groups",
+    "Agent detection for claude, codex, aider, gemini, opencode, goose, cursor, qwen, amp, crush, and openhands",
+    "Session identity with name, group, cwd, status, last command, exit code, tmux session, alternate-screen state, and agent type",
+    "Row notes included in restore snapshots",
+    "Hot-reload YAML configuration"
+  ],
+  "install": {
+    "homebrew": [
+      "brew tap amoswzw/tap",
+      "brew install --cask fluxtty"
+    ],
+    "source": [
+      "git clone https://github.com/amoswzw/fluxtty",
+      "cd fluxtty",
+      "npm install",
+      "npm run tauri build"
+    ]
+  },
+  "links": {
+    "website": "https://amoswzw.github.io/fluxtty/",
+    "repository": "https://github.com/amoswzw/fluxtty",
+    "latestRelease": "https://github.com/amoswzw/fluxtty/releases/latest",
+    "issues": "https://github.com/amoswzw/fluxtty/issues",
+    "llms": "https://amoswzw.github.io/fluxtty/llms.txt",
+    "llmsFull": "https://amoswzw.github.io/fluxtty/llms-full.txt"
+  }
+}

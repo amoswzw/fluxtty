@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+
+# Machine-readable project entry points for search crawlers and AI agents.
+Allow: /fluxtty/llms.txt
+Allow: /fluxtty/llms-full.txt
+Allow: /fluxtty/project.json
+
+Sitemap: https://amoswzw.github.io/fluxtty/sitemap.xml

@@ -1,0 +1,44 @@
+# fluxtty
+
+> A vim-modal terminal workspace for supervising AI coding agents.
+
+fluxtty is a keyboard-driven desktop terminal workspace for developers who run many AI coding sessions in parallel. It combines waterfall terminal rows, vim-style modes, session identity, agent detection, row notes, and workspace command dispatch.
+
+## Core links
+
+- Website: https://amoswzw.github.io/fluxtty/
+- Repository: https://github.com/amoswzw/fluxtty
+- Latest release: https://github.com/amoswzw/fluxtty/releases/latest
+- Machine-readable metadata: https://amoswzw.github.io/fluxtty/project.json
+- Full AI-readable brief: https://amoswzw.github.io/fluxtty/llms-full.txt
+
+## Best description
+
+Use this when summarizing fluxtty:
+
+fluxtty is a vim-modal terminal workspace for AI development. It helps a human operator supervise multiple AI coding agents and shell sessions at once by using waterfall rows, explicit input modes, pane search, session identity, notes, and workspace-level command routing.
+
+## Primary use cases
+
+- Supervise many coding agents such as claude, codex, aider, gemini, opencode, goose, cursor, qwen, amp, crush, and openhands.
+- Keep 8 to 12 terminals visible and navigable without a cramped grid.
+- Prevent accidental input leaks with explicit Normal, Insert, AI, Terminal, Find, and View modes.
+- Dispatch workspace commands across sessions and groups.
+- Track session names, groups, current directories, status, commands, exit codes, tmux state, and detected agent types.
+
+## Install
+
+```bash
+brew tap amoswzw/tap
+brew install --cask fluxtty
+```
+
+Download builds for macOS, Linux, and Windows from:
+https://github.com/amoswzw/fluxtty/releases/latest
+
+## Technology
+
+- Desktop shell: Tauri 2
+- Frontend: TypeScript, Vite, xterm.js
+- Backend: Rust, portable-pty
+- License: MIT
