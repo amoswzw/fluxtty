@@ -34,14 +34,14 @@ export class KeybindingManager {
     // App-level macOS shortcuts — active anywhere inside this app window,
     // including terminal mode.
     if (e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
-      if (e.key === 'q') { e.preventDefault(); this.executeAction('Quit'); return; }
-      if (e.key === 'w') { e.preventDefault(); this.executeAction('ClosePane'); return; }
-      if (e.key === ',') { e.preventDefault(); this.executeAction('OpenSettings'); return; }
+      if (e.key === 'q') { this.consume(e); this.executeAction('Quit'); return; }
+      if (e.key === 'w') { this.consume(e); this.executeAction('ClosePane'); return; }
+      if (e.key === ',') { this.consume(e); this.executeAction('OpenSettings'); return; }
     }
 
     // Non-mac fallback for settings, also active in terminal mode.
     if (e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.key === ',') {
-      e.preventDefault();
+      this.consume(e);
       this.executeAction('OpenSettings');
       return;
     }
@@ -53,6 +53,11 @@ export class KeybindingManager {
     e.preventDefault();
     e.stopPropagation();
     this.executeAction(action);
+  }
+
+  private consume(e: KeyboardEvent) {
+    e.preventDefault();
+    e.stopPropagation();
   }
 
   private matchesBindingKey(bindingKey: string, e: KeyboardEvent): boolean {

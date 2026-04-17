@@ -351,6 +351,8 @@ export class InputBar {
       }
 
       // ── Navigation sub-state (default) ────────────────────────────
+      if (e.metaKey) return;
+
       e.preventDefault(); // block character input
 
       if (e.key === 'i') { this.clearNormalGg(); if (sessionManager.getActivePaneId() != null) modeManager.enterInsert(); return; }
@@ -389,6 +391,8 @@ export class InputBar {
 
     // ── View mode (active row only — watching state) ─────────────────
     if (mode.type === 'view') {
+      if (e.metaKey) return;
+
       e.preventDefault();
       if (e.key === 'Escape' || e.key === 'v') { modeManager.enterNormal(); return; }
       if (e.key === 'i')  { modeManager.enterInsert(); return; }
