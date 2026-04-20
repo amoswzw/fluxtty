@@ -288,6 +288,16 @@ const THEME_PRESET_LIST: ThemePreset[] = [
     bright:  { black: '#002b36', red: '#cb4b16', green: '#586e75', yellow: '#657b83', blue: '#839496', magenta: '#6c71c4', cyan: '#93a1a1', white: '#fdf6e3' },
   },
   {
+    id: 'synthwave-84',
+    label: "SynthWave '84",
+    tone: 'Dark',
+    description: 'Neon retro palette with hot pink, cyan, and mint on a deep indigo background.',
+    primary: { background: '#262335', foreground: '#ffffff' },
+    cursor:  { text: '#262335', cursor: '#ff7edb' },
+    normal:  { black: '#495495', red: '#fe4450', green: '#72f1b8', yellow: '#fede5d', blue: '#a277ff', magenta: '#ff7edb', cyan: '#03edf9', white: '#d4d4d4' },
+    bright:  { black: '#848bbd', red: '#fe4450', green: '#72f1b8', yellow: '#f97e72', blue: '#c99dff', magenta: '#ff7edb', cyan: '#36f9f6', white: '#ffffff' },
+  },
+  {
     id: 'default-light',
     label: 'Fluxtty Light',
     tone: 'Light',
