@@ -1,6 +1,7 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { SearchAddon, type ISearchOptions } from '@xterm/addon-search';
 import type { PaneInfo } from '../session/types';
 import { transport } from '../transport';
 import { configContext } from '../config/ConfigContext';
@@ -60,6 +61,7 @@ export class TerminalPane {
   readonly paneId: number;
   private term: Terminal;
   private fitAddon: FitAddon;
+  private searchAddon: SearchAddon;
   private termContainer!: HTMLElement;
   private unlisten: UnlistenFn | null = null;
   private unlistenClose: UnlistenFn | null = null;
@@ -95,6 +97,8 @@ export class TerminalPane {
     this.fitAddon = new FitAddon();
     this.term.loadAddon(this.fitAddon);
     this.term.loadAddon(new WebLinksAddon());
+    this.searchAddon = new SearchAddon();
+    this.term.loadAddon(this.searchAddon);
 
     // Vi scroll mode: intercept keys before they reach the PTY
     this.term.attachCustomKeyEventHandler((e) => this.handleViKey(e));
@@ -424,6 +428,34 @@ export class TerminalPane {
 
   getInfo(): PaneInfo {
     return this.info;
+  }
+
+  private searchOptions(): ISearchOptions {
+    return {
+      caseSensitive: false,
+      decorations: {
+        matchBackground: '#ffd54f55',
+        matchBorder: '#ffb300',
+        matchOverviewRuler: '#ffb300',
+        activeMatchBackground: '#ff9800aa',
+        activeMatchBorder: '#ff6f00',
+        activeMatchColorOverviewRuler: '#ff6f00',
+      },
+    };
+  }
+
+  searchNext(query: string): boolean {
+    if (!query) { this.clearSearch(); return false; }
+    return this.searchAddon.findNext(query, this.searchOptions());
+  }
+
+  searchPrevious(query: string): boolean {
+    if (!query) { this.clearSearch(); return false; }
+    return this.searchAddon.findPrevious(query, this.searchOptions());
+  }
+
+  clearSearch() {
+    this.searchAddon.clearDecorations();
   }
 
   private normalizeScrollModifier(value: string | null | undefined): WorkspaceScrollModifier {

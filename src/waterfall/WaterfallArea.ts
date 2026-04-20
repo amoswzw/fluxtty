@@ -110,6 +110,20 @@ export class WaterfallArea {
       const activeId = sessionManager.getActivePaneId();
       if (activeId != null) this.scrollToPane(activeId);
     });
+
+    document.addEventListener('pane-search', (e: Event) => {
+      const { paneId, query, direction } = (e as CustomEvent<{
+        paneId: number; query: string; direction: 'next' | 'prev' | 'clear';
+      }>).detail;
+      const pane = this.panes.get(paneId);
+      if (!pane) return;
+      if (direction === 'clear' || !query) { pane.clearSearch(); return; }
+      if (direction === 'prev') pane.searchPrevious(query);
+      else pane.searchNext(query);
+    });
+    document.addEventListener('pane-search-clear', () => {
+      for (const pane of this.panes.values()) pane.clearSearch();
+    });
     document.addEventListener('workspace-wheel-scroll', (e: Event) => {
       const { deltaPixels, paneId, clientX, clientY } = (e as CustomEvent<{
         deltaPixels: number;

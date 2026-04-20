@@ -37,13 +37,13 @@ export class KeybindingManager {
       if (e.key === 'q') { this.consume(e); this.executeAction('Quit'); return; }
       if (e.key === 'w') { this.consume(e); this.executeAction('ClosePane'); return; }
       if (e.key === ',') { this.consume(e); this.executeAction('OpenSettings'); return; }
+      if (e.key === 'f') { this.consume(e); this.executeAction('SearchPane'); return; }
     }
 
-    // Non-mac fallback for settings, also active in terminal mode.
-    if (e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.key === ',') {
-      this.consume(e);
-      this.executeAction('OpenSettings');
-      return;
+    // Non-mac fallback for settings + search, active in all modes.
+    if (e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+      if (e.key === ',') { this.consume(e); this.executeAction('OpenSettings'); return; }
+      if (e.key === 'f') { this.consume(e); this.executeAction('SearchPane'); return; }
     }
 
     // Standard keybindings from config
@@ -128,6 +128,9 @@ export class KeybindingManager {
         break;
       case 'OpenSettings':
         openSettings();
+        break;
+      case 'SearchPane':
+        modeManager.enterPaneSearch();
         break;
       case 'ToggleInputMode':
         modeManager.toggle();

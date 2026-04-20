@@ -53,7 +53,8 @@ export type InputMode =
   | { type: 'ai' }                          // a: free-form chat with Workspace AI
   | { type: 'insert' }                      // i: line editor → active pane PTY (agent-aware)
   | { type: 'terminal'; paneId: number }    // Ctrl+\: xterm owns raw keyboard
-  | { type: 'pane-selector'; query: string }; // /: fuzzy pane search
+  | { type: 'pane-selector'; query: string }  // fuzzy pane search (reachable via sidebar)
+  | { type: 'pane-search'; paneId: number; query: string }; // /: in-terminal content search
 
 export const AGENT_LABELS: Record<AgentType, string> = {
   none: '',

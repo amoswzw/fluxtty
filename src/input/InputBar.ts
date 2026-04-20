@@ -103,6 +103,10 @@ export class InputBar {
   // Insert mode: track pane context to detect agent/TUI transitions
   private lastInsertContextKind: 'agent' | 'tui' | 'none' = 'none';
 
+  // Pane search: vim-style repeat with n/N after a committed /query
+  private lastSearchQuery = '';
+  private paneSearchKeepOnExit = false;
+
   constructor(container: HTMLElement) {
     this.el = document.createElement('div');
     this.el.className = 'input-bar-wrapper';
@@ -279,7 +283,7 @@ export class InputBar {
         if (e.metaKey) return;
         this.inputEl.focus();
         this.handleKeyDown(e);
-      } else if (mode.type === 'insert') {
+      } else if (mode.type === 'insert' || mode.type === 'pane-search') {
         // Focus was stolen (e.g. clicking a close button). Re-anchor to inputEl
         // and forward the keystroke so nothing is lost.
         this.inputEl.focus();
@@ -316,6 +320,25 @@ export class InputBar {
     }
 
     const mode = modeManager.getMode();
+
+    // ── Pane search mode (in-terminal content find) ──────────────────
+    if (mode.type === 'pane-search') {
+      if (composing) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        this.exitPaneSearch();
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        this.commitPaneSearch(e.shiftKey ? 'prev' : 'next');
+        return;
+      }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); this.paneSearchFind('prev'); return; }
+      if (e.key === 'ArrowDown') { e.preventDefault(); this.paneSearchFind('next'); return; }
+      // All other keys type into the input (handled by handleInput → incremental search)
+      return;
+    }
 
     // ── Normal mode (vi normal) ───────────────────────────────────────
     if (mode.type === 'normal') {
@@ -359,8 +382,15 @@ export class InputBar {
       if (e.key === 'v') { this.clearNormalGg(); modeManager.enterView(); return; }
       if (e.key === 'a') { this.clearNormalGg(); modeManager.enterAI();     return; }
       if (e.key === ':')    { this.clearNormalGg(); this.enterNormalCommand(); return; }
-      if (e.key === '/')    { this.clearNormalGg(); this.inputEl.value = ''; modeManager.enterPaneSelector(); return; }
-      if (e.key === 'Escape') { this.clearNormalGg(); return; }
+      if (e.key === '/')    { this.clearNormalGg(); this.inputEl.value = ''; modeManager.enterPaneSearch(); return; }
+      if (e.key === 'Escape') {
+        this.clearNormalGg();
+        if (this.lastSearchQuery) {
+          this.lastSearchQuery = '';
+          document.dispatchEvent(new CustomEvent('pane-search-clear'));
+        }
+        return;
+      }
 
       if (!e.ctrlKey && !e.altKey) {
         if (e.key === 'h' || e.key === 'ArrowLeft')  { this.noteNormalShortcut('h'); this.dispatchWorkspaceAction('FocusPrevPane'); return; }
@@ -371,7 +401,15 @@ export class InputBar {
         if (e.key === 'W') { this.dispatchWorkspaceAction('FocusPrevPane'); return; }
         if (e.key === 'G') { this.dispatchViScroll('bottom'); return; }
         if (e.key === 'g') { this.handleGgKey(); return; }
-        if (e.key === 'n') { this.noteNormalShortcut('n'); this.dispatchWorkspaceAction('NewTerminal');          return; }
+        if (e.key === 'n') {
+          if (this.repeatPaneSearch('next')) return;
+          this.noteNormalShortcut('n');
+          this.dispatchWorkspaceAction('NewTerminal');
+          return;
+        }
+        if (e.key === 'N') {
+          if (this.repeatPaneSearch('prev')) return;
+        }
         if (e.key === 's') { this.noteNormalShortcut('s'); this.dispatchWorkspaceAction('SplitHorizontal');      return; }
         if (e.key === 'q') { this.noteNormalShortcut('q'); this.dispatchWorkspaceAction('ClosePane');            return; }
         if (e.key === 'b') { this.dispatchWorkspaceAction('ToggleSidebar');        return; }
@@ -382,7 +420,6 @@ export class InputBar {
       if (e.ctrlKey) {
         if (e.key === 'd') { this.dispatchViScroll('halfDown'); return; }
         if (e.key === 'u') { this.dispatchViScroll('halfUp');   return; }
-        if (e.key === 'f') { this.dispatchViScroll('pageDown'); return; }
         if (e.key === 'b') { this.dispatchViScroll('pageUp');   return; }
       }
 
@@ -607,6 +644,53 @@ export class InputBar {
     this.inputEl.focus();
   }
 
+  private paneSearchFind(direction: 'next' | 'prev') {
+    const mode = modeManager.getMode();
+    if (mode.type !== 'pane-search') return;
+    const query = this.inputEl.value;
+    if (!query) return;
+    document.dispatchEvent(new CustomEvent('pane-search', {
+      detail: { paneId: mode.paneId, query, direction },
+    }));
+  }
+
+  private exitPaneSearch() {
+    const mode = modeManager.getMode();
+    if (mode.type === 'pane-search') {
+      document.dispatchEvent(new CustomEvent('pane-search', {
+        detail: { paneId: mode.paneId, query: '', direction: 'clear' },
+      }));
+    }
+    this.lastSearchQuery = '';
+    this.paneSearchKeepOnExit = false;
+    this.inputEl.value = '';
+    modeManager.enterNormal();
+  }
+
+  private commitPaneSearch(direction: 'next' | 'prev') {
+    const mode = modeManager.getMode();
+    if (mode.type !== 'pane-search') return;
+    const query = this.inputEl.value;
+    if (!query) { this.exitPaneSearch(); return; }
+    this.lastSearchQuery = query;
+    document.dispatchEvent(new CustomEvent('pane-search', {
+      detail: { paneId: mode.paneId, query, direction },
+    }));
+    this.paneSearchKeepOnExit = true;
+    this.inputEl.value = '';
+    modeManager.enterNormal();
+  }
+
+  private repeatPaneSearch(direction: 'next' | 'prev') {
+    if (!this.lastSearchQuery) return false;
+    const activeId = sessionManager.getActivePaneId();
+    if (activeId == null) return false;
+    document.dispatchEvent(new CustomEvent('pane-search', {
+      detail: { paneId: activeId, query: this.lastSearchQuery, direction },
+    }));
+    return true;
+  }
+
   private exitNormalCommand() {
     this.normalCommandActive = false;
     this.inputEl.value = '';
@@ -659,6 +743,13 @@ export class InputBar {
 
     if (this.paneSelector.isOpen()) {
       this.paneSelector.filter(val.startsWith('/') ? val.slice(1) : val);
+      return;
+    }
+
+    if (mode.type === 'pane-search') {
+      document.dispatchEvent(new CustomEvent('pane-search', {
+        detail: { paneId: mode.paneId, query: val, direction: val ? 'next' : 'clear' },
+      }));
       return;
     }
 
@@ -946,6 +1037,15 @@ export class InputBar {
       this.lastInsertContextKind = 'none';
     }
 
+    // Clear terminal search decorations when leaving pane-search mode,
+    // unless the exit was a commit (Enter) which keeps decorations for n/N repeat.
+    if (prevMode === 'pane-search' && mode.type !== 'pane-search') {
+      if (!this.paneSearchKeepOnExit) {
+        document.dispatchEvent(new CustomEvent('pane-search-clear'));
+      }
+      this.paneSearchKeepOnExit = false;
+    }
+
     switch (mode.type) {
       case 'normal': {
         const pane = sessionManager.getActivePane();
@@ -1014,6 +1114,16 @@ export class InputBar {
         this.modeIndicatorEl.textContent = 'FIND';
         this.modeIndicatorEl.className = 'mode-indicator mode-selector';
         this.inputEl.placeholder = 'fuzzy search sessions…';
+        break;
+      }
+      case 'pane-search': {
+        this.inputEl.readOnly = false;
+        this.inputEl.value = '';
+        this.promptEl.textContent = '/';
+        this.modeIndicatorEl.textContent = 'SEARCH';
+        this.modeIndicatorEl.className = 'mode-indicator mode-search';
+        this.inputEl.placeholder = 'search terminal… (Enter next, Shift+Enter prev, Esc close)';
+        this.inputEl.focus();
         break;
       }
     }

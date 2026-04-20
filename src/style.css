@@ -824,6 +824,10 @@ body[data-transparent="true"] .pane-ctx-menu {
   border-top-color: var(--yellow);
   background: color-mix(in srgb, var(--bg) 65%, color-mix(in srgb, var(--surface) 85%, var(--yellow) 15%) 35%);
 }
+.input-bar-wrapper[data-mode="pane-search"] {
+  border-top-color: var(--yellow);
+  background: color-mix(in srgb, var(--bg) 70%, color-mix(in srgb, var(--surface) 85%, var(--yellow) 15%) 30%);
+}
 
 /* ── AI Log ───────────────────────────────────────────────────────── */
 .ai-log {
@@ -1007,6 +1011,7 @@ body[data-transparent="true"] .pane-ctx-menu {
 .mode-terminal.mode-terminal-agent { background: rgba(57,197,207,.18); color: var(--cyan); border-color: rgba(57,197,207,.55); }
 .mode-terminal.mode-terminal-tui { background: rgba(210,153,34,.16); color: var(--yellow); border-color: rgba(210,153,34,.48); }
 .mode-selector { background: rgba(56,139,253,.14);  color: var(--blue);    border: 1px solid rgba(56,139,253,.42); }
+.mode-search   { background: rgba(210,153,34,.18);  color: var(--yellow);  border: 1px solid rgba(210,153,34,.5); }
 
 .mode-agent-claude  { color: var(--cyan); }
 .mode-agent-codex   { color: var(--magenta, #bc8cff); }
@@ -1021,6 +1026,7 @@ body[data-transparent="true"] .pane-ctx-menu {
 [data-mode="ai"]     .input-prompt { color: var(--magenta); font-weight: 700; }
 [data-mode="agent"]  .input-prompt { color: var(--cyan); }
 [data-mode="pane-selector"] .input-prompt { color: var(--blue); }
+[data-mode="pane-search"] .input-prompt { color: var(--yellow); }
 
 .input-field {
   flex: 1;

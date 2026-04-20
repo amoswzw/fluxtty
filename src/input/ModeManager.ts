@@ -55,12 +55,19 @@ export class ModeManager {
     this.set({ type: 'pane-selector', query: '' });
   }
 
+  enterPaneSearch(paneId?: number) {
+    const id = paneId ?? sessionManager.getActivePaneId();
+    if (id == null) return;
+    this.set({ type: 'pane-search', paneId: id, query: '' });
+  }
+
   // Compat aliases used by TerminalPane / AgentDetector
   isInPaneMode(): boolean     { return this.mode.type === 'terminal'; }
   isInShellMode(): boolean    { return this.mode.type === 'insert'; }
   isInNormalMode(): boolean   { return this.mode.type === 'normal'; }
   isInAIMode(): boolean       { return this.mode.type === 'ai'; }
   isInSelectorMode(): boolean { return this.mode.type === 'pane-selector'; }
+  isInPaneSearchMode(): boolean { return this.mode.type === 'pane-search'; }
 
   getCurrentPaneId(): number | null {
     if (this.mode.type === 'terminal') return this.mode.paneId;
