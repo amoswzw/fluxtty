@@ -16,9 +16,9 @@ export class ModeManager {
   }
 
   private set(mode: InputMode) {
-    const cur = this.mode as Record<string, unknown>;
-    const nxt = mode as Record<string, unknown>;
-    if (cur.type === nxt.type && cur.paneId === nxt.paneId) return;
+    // Always fire listeners, even when re-entering the same mode. If internal
+    // mode state and DOM state ever diverge (e.g. stale readOnly on inputEl),
+    // re-entering the mode via the user pressing its key heals the UI.
     this.mode = mode;
     this.listeners.forEach(l => l(mode));
   }
