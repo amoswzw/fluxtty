@@ -45,13 +45,13 @@ It operates in four modes modeled after Vim's modal philosophy.
 | **Normal** | `NORMAL` indicator, read-only hint | Workspace navigation (hjkl, gg/G, scroll) |
 | **Insert** | `INSERT [row/total] [agent]` + pane prompt | Active pane's shell stdin |
 | **Terminal** | `TERMINAL [pane-name]` | Active pane's xterm (raw keyboard, xterm owns input) |
-| **Pane Selector** | `FIND /` + fuzzy query | Pane list filter overlay |
+| **Pane Search** | `SEARCH /` + query | Search active pane's terminal buffer (xterm SearchAddon) |
 
 #### Mode Transitions
 
 ```
 Normal  ──i or a──────────────→ Insert (line editor → PTY)
-        ──/───────────────────→ Pane Selector overlay
+        ──/ or Ctrl+F────────→ Pane Search (in-terminal content find)
         ──: ──────────────────→ Inline command (workspace AI / Workspace commands)
         ──hjkl/arrows─────────→ Navigate rows/panes (no mode change)
 
@@ -63,8 +63,9 @@ Insert  ──Esc─────────────────→ Normal
 Terminal ──Ctrl+\─────────────→ Normal
          (all other keys go to xterm; only Ctrl+\ is intercepted)
 
-Pane Selector ──Enter─────────→ Normal (new active pane, waterfall scrolls to it)
-              ──Esc────────────→ Normal (no change)
+Pane Search   ──Enter─────────→ commit query → Normal (n/N repeat)
+              ──Shift+Enter────→ commit going backward → Normal
+              ──Esc────────────→ Normal (clears match decorations)
 ```
 
 #### Normal Mode Navigation (vi-style)
@@ -95,12 +96,18 @@ Pane Selector ──Enter─────────→ Normal (new active pane,
 - Tab triggers shell completion (file/command) or agent slash-command completion if agent detected
 - Ctrl+C sends SIGINT; Ctrl+D sends EOF
 
-#### Pane Selector (`/`)
-- Triggered by `/` in Normal mode
-- Fuzzy search over all panes: matches name, group, cwd, status
-- Shows: pane name · group · status · cwd
-- Arrow keys or Ctrl+J/K to navigate; Enter to select; Esc to cancel
-- Selection scrolls waterfall to the pane and makes it active
+#### Pane Search (`/` or `Ctrl+F` / `Cmd+F`)
+- `/` in Normal mode — searches content in the **active terminal pane** (xterm buffer, scrollback included)
+- `Ctrl+F` / `Cmd+F` — global shortcut, opens search from any mode
+- Incremental: typing jumps to the next match as you type
+- Enter commits the query and returns to Normal (decorations stay); Shift+Enter commits going backwards
+- In Normal mode after a commit: `n` repeats search forward, `N` backward (vim-style). `n` falls back to NewTerminal when no search is pending.
+- Esc while in Pane Search clears decorations, drops the query, and returns to Normal
+- Esc in Normal mode cancels an active search (clears decorations and drops the saved query so `n`/`N` no longer repeat); if no search is pending, Esc keeps its existing behavior
+- Implementation: `@xterm/addon-search` loaded per `TerminalPane`; `InputBar` dispatches `pane-search` events routed by `WaterfallArea`
+
+#### Pane Selector (fuzzy session find)
+- The `PaneSelector` overlay still exists (name/group/cwd fuzzy search) but has no keyboard shortcut after `/` was repurposed for in-terminal search. Accessible via sidebar click.
 
 #### Terminal Mode (Ctrl+\)
 - xterm.js owns the keyboard completely
@@ -267,7 +274,8 @@ type InputMode =
   | { type: 'normal' }                       // vi normal — navigation + : cmd + / selector
   | { type: 'insert' }                       // i/a: line editor → active pane PTY
   | { type: 'terminal'; paneId: number }     // Ctrl+\: xterm owns raw keyboard
-  | { type: 'pane-selector'; query: string }; // /: fuzzy pane search overlay
+  | { type: 'pane-selector'; query: string }   // fuzzy pane find overlay (no default key)
+  | { type: 'pane-search'; paneId: number; query: string }; // /: content search in active pane
 ```
 
 ### AutoNamer

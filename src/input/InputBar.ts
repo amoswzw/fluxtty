@@ -411,7 +411,6 @@ export class InputBar {
           if (this.repeatPaneSearch('prev')) return;
         }
         if (e.key === 's') { this.noteNormalShortcut('s'); this.dispatchWorkspaceAction('SplitHorizontal');      return; }
-        if (e.key === 'q') { this.noteNormalShortcut('q'); this.dispatchWorkspaceAction('ClosePane');            return; }
         if (e.key === 'b') { this.dispatchWorkspaceAction('ToggleSidebar');        return; }
         if (e.key === 'r') { this.noteNormalShortcut('r'); this.dispatchWorkspaceAction('RenameCurrentSession'); return; }
         if (e.key === 'm') { this.noteNormalShortcut('m'); document.dispatchEvent(new CustomEvent('open-pane-note')); return; }
