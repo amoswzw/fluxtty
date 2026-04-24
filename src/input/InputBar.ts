@@ -3,6 +3,24 @@ import { AGENT_LABELS, AGENT_SLASH_COMMANDS } from '../session/types';
 import { modeManager } from './ModeManager';
 import { agentDetector } from './AgentDetector';
 import { PaneSelector } from './PaneSelector';
+import { modeClearsInputValueOnRender } from './modeRenderPolicy';
+import {
+  deleteBackwardShellWord,
+  deleteBackwardToLineStart,
+  deleteBackwardChar,
+  deleteForwardChar,
+  deleteForwardShellWord,
+  deleteForwardToLineEnd,
+  moveCursorBackwardWord,
+  moveCursorForwardWord,
+  moveCursorLeft,
+  moveCursorLineEnd,
+  moveCursorLineStart,
+  moveCursorRight,
+  transposeChars,
+  yankKillBuffer,
+  type ShellLineState,
+} from './shellLineEditing';
 import { sessionManager } from '../session/SessionManager';
 import { aiHandler } from '../ai/ai-handler';
 import { planExecutor } from '../ai/plan-executor';
@@ -70,6 +88,56 @@ function splitShellInputForCompletion(input: string): { prefix: string; currentW
   };
 }
 
+function isTerminalToggleEvent(e: KeyboardEvent): boolean {
+  return !!e.ctrlKey && (
+    e.code === 'Backslash'
+    || e.code === 'IntlBackslash'
+    || e.code === 'IntlYen'
+    || e.key === '\\'
+    || e.key === '|'
+    || e.key === '¥'
+    || e.keyCode === 220
+    || e.keyCode === 226
+  );
+}
+
+function ctrlInsertSequence(key: string): string | null {
+  switch (key.toLowerCase()) {
+    case 'a': return '\x01';
+    case 'b': return '\x02';
+    case 'c': return '\x03';
+    case 'd': return '\x04';
+    case 'e': return '\x05';
+    case 'f': return '\x06';
+    case 'h': return '\x08';
+    case 'k': return '\x0b';
+    case 'l': return '\x0c';
+    case 'n': return '\x0e';
+    case 'p': return '\x10';
+    case 'r': return '\x12';
+    case 't': return '\x14';
+    case 'u': return '\x15';
+    case 'w': return '\x17';
+    case 'y': return '\x19';
+    default: return null;
+  }
+}
+
+function altInsertSequence(e: KeyboardEvent): string | null {
+  if (!e.altKey || e.ctrlKey || e.metaKey) return null;
+  if (e.key === 'ArrowLeft') return '\x1bb';
+  if (e.key === 'ArrowRight') return '\x1bf';
+  if (e.key === 'Backspace') return '\x1b\x7f';
+  if (e.key === 'Delete') return '\x1bd';
+
+  switch (e.key.toLowerCase()) {
+    case 'b': return '\x1bb';
+    case 'd': return '\x1bd';
+    case 'f': return '\x1bf';
+    default: return null;
+  }
+}
+
 export class InputBar {
   readonly el: HTMLElement;
   private inputEl!: HTMLInputElement;
@@ -102,6 +170,7 @@ export class InputBar {
 
   // Insert mode: track pane context to detect agent/TUI transitions
   private lastInsertContextKind: 'agent' | 'tui' | 'none' = 'none';
+  private insertKillBuffer = '';
 
   // Pane search: vim-style repeat with n/N after a committed /query
   private lastSearchQuery = '';
@@ -505,6 +574,12 @@ export class InputBar {
         modeManager.enterNormal();
         return;
       }
+      if (isTerminalToggleEvent(e)) {
+        e.preventDefault();
+        this.hideAutocomplete();
+        modeManager.enterTerminal(sessionManager.getActivePaneId() ?? undefined);
+        return;
+      }
 
       const liveTyping = configContext.get().input.live_typing;
 
@@ -565,12 +640,15 @@ export class InputBar {
         if (e.key === 'Delete')     { e.preventDefault(); this.markLiveTypingMirrorUnsynced(); this.sendKeyToPTY('\x1b[3~'); return; }
         if (e.key === 'Home')       { e.preventDefault(); this.markLiveTypingMirrorUnsynced(); this.sendKeyToPTY('\x1b[H'); return; }
         if (e.key === 'End')        { e.preventDefault(); this.markLiveTypingMirrorUnsynced(); this.sendKeyToPTY('\x1b[F'); return; }
-        if (e.ctrlKey) {
-          const ctrlMap: Record<string, string> = {
-            c: '\x03', d: '\x04', a: '\x01', e: '\x05',
-            k: '\x0b', u: '\x15', w: '\x17', l: '\x0c', r: '\x12',
-          };
-          const seq = ctrlMap[e.key.toLowerCase()];
+        const altSeq = altInsertSequence(e);
+        if (altSeq) {
+          e.preventDefault();
+          this.markLiveTypingMirrorUnsynced();
+          this.sendKeyToPTY(altSeq);
+          return;
+        }
+        if (e.ctrlKey && !e.shiftKey) {
+          const seq = ctrlInsertSequence(e.key);
           if (seq) {
             e.preventDefault();
             if (e.key.toLowerCase() === 'c') {
@@ -611,19 +689,7 @@ export class InputBar {
       }
       if (e.key === 'ArrowUp')   { e.preventDefault(); this.historyNavigate(-1); return; }
       if (e.key === 'ArrowDown') { e.preventDefault(); this.historyNavigate(1);  return; }
-      if (e.ctrlKey && e.key === 'c') {
-        e.preventDefault();
-        this.sendKeyToPTY('\x03');
-        this.inputEl.value = '';
-        this.historyIdx = -1;
-        this.hideAutocomplete();
-        return;
-      }
-      if (e.ctrlKey && e.key === 'd') {
-        e.preventDefault();
-        this.sendKeyToPTY('\x04');
-        return;
-      }
+      if (this.handleBufferedInsertShortcut(e)) return;
       return;
     }
 
@@ -727,6 +793,92 @@ export class InputBar {
     document.dispatchEvent(new CustomEvent('insert-command-submitted', {
       detail: { text: trimmed, paneId },
     }));
+  }
+
+  private getShellLineState(): ShellLineState {
+    const value = this.inputEl.value;
+    const selectionStart = this.inputEl.selectionStart ?? value.length;
+    const selectionEnd = this.inputEl.selectionEnd ?? value.length;
+    return {
+      value,
+      selectionStart,
+      selectionEnd,
+      killBuffer: this.insertKillBuffer,
+    };
+  }
+
+  private applyShellLineState(state: ShellLineState) {
+    this.insertKillBuffer = state.killBuffer;
+    this.inputEl.value = state.value;
+    this.inputEl.setSelectionRange(state.selectionStart, state.selectionEnd);
+    this.handleInput();
+  }
+
+  private handleBufferedInsertShortcut(e: KeyboardEvent): boolean {
+    if (e.metaKey) return false;
+
+    if (e.ctrlKey && !e.altKey && !e.shiftKey) {
+      const key = e.key.toLowerCase();
+
+      if (key === 'c') {
+        e.preventDefault();
+        this.sendKeyToPTY('\x03');
+        this.inputEl.value = '';
+        this.historyIdx = -1;
+        this.insertKillBuffer = '';
+        this.hideAutocomplete();
+        return true;
+      }
+
+      if (key === 'd') {
+        e.preventDefault();
+        const state = this.getShellLineState();
+        const hasContent = state.value.length > 0;
+        const hasSelection = state.selectionStart !== state.selectionEnd;
+        if (!hasContent && !hasSelection) {
+          this.sendKeyToPTY('\x04');
+          return true;
+        }
+        this.applyShellLineState(deleteForwardChar(state));
+        return true;
+      }
+
+      if (key === 'a') { e.preventDefault(); this.applyShellLineState(moveCursorLineStart(this.getShellLineState())); return true; }
+      if (key === 'e') { e.preventDefault(); this.applyShellLineState(moveCursorLineEnd(this.getShellLineState())); return true; }
+      if (key === 'b') { e.preventDefault(); this.applyShellLineState(moveCursorLeft(this.getShellLineState())); return true; }
+      if (key === 'f') { e.preventDefault(); this.applyShellLineState(moveCursorRight(this.getShellLineState())); return true; }
+      if (key === 'h') { e.preventDefault(); this.applyShellLineState(deleteBackwardChar(this.getShellLineState())); return true; }
+      if (key === 'k') { e.preventDefault(); this.applyShellLineState(deleteForwardToLineEnd(this.getShellLineState())); return true; }
+      if (key === 'n') { e.preventDefault(); this.historyNavigate(1); return true; }
+      if (key === 'p') { e.preventDefault(); this.historyNavigate(-1); return true; }
+      if (key === 't') { e.preventDefault(); this.applyShellLineState(transposeChars(this.getShellLineState())); return true; }
+      if (key === 'u') { e.preventDefault(); this.applyShellLineState(deleteBackwardToLineStart(this.getShellLineState())); return true; }
+      if (key === 'w') { e.preventDefault(); this.applyShellLineState(deleteBackwardShellWord(this.getShellLineState())); return true; }
+      if (key === 'y') { e.preventDefault(); this.applyShellLineState(yankKillBuffer(this.getShellLineState())); return true; }
+    }
+
+    const altSeq = altInsertSequence(e);
+    if (!altSeq) return false;
+
+    e.preventDefault();
+    if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'b') {
+      this.applyShellLineState(moveCursorBackwardWord(this.getShellLineState()));
+      return true;
+    }
+    if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'f') {
+      this.applyShellLineState(moveCursorForwardWord(this.getShellLineState()));
+      return true;
+    }
+    if (e.key === 'Backspace') {
+      this.applyShellLineState(deleteBackwardShellWord(this.getShellLineState()));
+      return true;
+    }
+    if (e.key === 'Delete' || e.key.toLowerCase() === 'd') {
+      this.applyShellLineState(deleteForwardShellWord(this.getShellLineState()));
+      return true;
+    }
+
+    return false;
   }
 
   private handleInput() {
@@ -1011,6 +1163,9 @@ export class InputBar {
     document.body.dataset.mode = mode.type;
     this.inputEl.readOnly = false;
     this.hideAutocomplete();
+    if (modeClearsInputValueOnRender(mode.type)) {
+      this.inputEl.value = '';
+    }
 
     // Keep pane selector in sync with mode state.
     if (mode.type === 'pane-selector') {
@@ -1117,7 +1272,6 @@ export class InputBar {
       }
       case 'pane-search': {
         this.inputEl.readOnly = false;
-        this.inputEl.value = '';
         this.promptEl.textContent = '/';
         this.modeIndicatorEl.textContent = 'SEARCH';
         this.modeIndicatorEl.className = 'mode-indicator mode-search';

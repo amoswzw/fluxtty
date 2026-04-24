@@ -6,6 +6,20 @@ import { sessionManager } from '../session/SessionManager';
 import type { SessionSidebar } from '../sidebar/SessionSidebar';
 import { workspaceActions } from '../workspace/WorkspaceActions';
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!target || typeof target !== 'object') return false;
+  const el = target as {
+    tagName?: string;
+    isContentEditable?: boolean;
+    classList?: { contains?: (token: string) => boolean };
+  };
+  const tagName = typeof el.tagName === 'string' ? el.tagName.toUpperCase() : '';
+  if (tagName === 'TEXTAREA') {
+    return !(typeof el.classList?.contains === 'function' && el.classList.contains('xterm-helper-textarea'));
+  }
+  return tagName === 'INPUT' || el.isContentEditable === true;
+}
+
 interface ActionHandlers {
   waterfallArea: WaterfallArea;
   sidebar: SessionSidebar;
@@ -44,6 +58,10 @@ export class KeybindingManager {
     if (e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
       if (e.key === ',') { this.consume(e); this.executeAction('OpenSettings'); return; }
       if (e.key === 'f') { this.consume(e); this.executeAction('SearchPane'); return; }
+    }
+
+    if (modeManager.getMode().type === 'insert' && isEditableTarget(e.target) && !e.metaKey && !e.shiftKey) {
+      return;
     }
 
     // Standard keybindings from config
