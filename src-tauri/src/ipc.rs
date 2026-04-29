@@ -185,6 +185,9 @@ pub async fn pty_kill(
         let mut session = session_mgr.lock().unwrap();
         session.remove_pane(pane_id);
         let _ = app.emit("session:changed", session.all_panes());
+        if let Some(active) = session.active_pane_id() {
+            let _ = app.emit("session:active_changed", active);
+        }
     }
     Ok(())
 }
