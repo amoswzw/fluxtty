@@ -416,7 +416,8 @@ impl Default for ShellConfig {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
         ShellConfig {
             program: shell,
-            args: vec![],
+            // Launch as a login shell so ~/.zprofile / ~/.bash_profile / etc. run.
+            args: vec!["-l".to_string()],
         }
     }
 }

@@ -148,7 +148,12 @@ if [[ -z "$_FLUXTTY_INIT" ]]; then
   _wt_precmd
 fi
 export ZDOTDIR="{orig}"
+# Restore login-shell init files. Our ZDOTDIR shim hides $orig/.zprofile and
+# $orig/.zlogin from zsh's normal startup, so source them here when running
+# as a login shell. .zprofile must run before .zshrc to match zsh's order.
+[[ -o login && -f "{orig}/.zprofile" ]] && source "{orig}/.zprofile"
 [[ -f "{orig}/.zshrc" ]] && source "{orig}/.zshrc"
+[[ -o login && -f "{orig}/.zlogin" ]] && source "{orig}/.zlogin"
 "#
     );
 
