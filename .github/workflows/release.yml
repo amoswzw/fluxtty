@@ -93,7 +93,7 @@ jobs:
           "
 
       - name: Build and publish Tauri bundle
-        uses: tauri-apps/tauri-action@v0.6.2
+        uses: tauri-apps/tauri-action@v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # macOS code signing and notarization
