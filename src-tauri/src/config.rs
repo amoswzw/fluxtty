@@ -425,7 +425,7 @@ impl Default for ShellConfig {
 impl Default for TmuxConfig {
     fn default() -> Self {
         TmuxConfig {
-            enabled: false,
+            enabled: true,
             program: "tmux".to_string(),
             session: default_tmux_session_template(),
             auto_attach: true,
@@ -631,9 +631,9 @@ persistence:
     }
 
     #[test]
-    fn tmux_defaults_to_disabled_but_passthrough_ready() {
+    fn tmux_defaults_to_enabled_and_passthrough_ready() {
         let cfg: Config = serde_yaml::from_str("{}").unwrap();
-        assert!(!cfg.tmux.enabled);
+        assert!(cfg.tmux.enabled);
         assert_eq!(cfg.tmux.program, "tmux");
         // Template differs between debug/release builds so that dev and prod
         // discovery never see each other's sessions.
