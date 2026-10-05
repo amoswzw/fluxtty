@@ -19,7 +19,7 @@
     "@xterm/xterm": "^6.0.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.5",
+    "@tauri-apps/cli": "^2.12.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.0",
     "vitest": "^5.0.1"
