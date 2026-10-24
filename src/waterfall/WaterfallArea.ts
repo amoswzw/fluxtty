@@ -121,6 +121,10 @@ export class WaterfallArea {
       if (direction === 'prev') pane.searchPrevious(query);
       else pane.searchNext(query);
     });
+    document.addEventListener('pane-paste', (e: Event) => {
+      const { paneId, text } = (e as CustomEvent<{ paneId: number; text: string }>).detail;
+      this.panes.get(paneId)?.paste(text);
+    });
     document.addEventListener('pane-search-clear', () => {
       for (const pane of this.panes.values()) pane.clearSearch();
     });

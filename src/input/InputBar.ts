@@ -117,6 +117,7 @@ function ctrlInsertSequence(key: string): string | null {
     case 'r': return '\x12';
     case 't': return '\x14';
     case 'u': return '\x15';
+    case 'v': return '\x16';
     case 'w': return '\x17';
     case 'y': return '\x19';
     default: return null;
@@ -311,11 +312,20 @@ export class InputBar {
     const mode = modeManager.getMode();
     if (mode.type !== 'insert') return;
 
+    const text = e.clipboardData?.getData('text') ?? '';
+    if (!text) {
+      // Image-only clipboard: forward an empty bracketed paste, as macOS
+      // terminals do — agent CLIs (e.g. Claude Code) treat it as "read the
+      // image from the clipboard yourself".
+      const activeId = sessionManager.getActivePaneId();
+      if (activeId == null) return;
+      e.preventDefault();
+      document.dispatchEvent(new CustomEvent('pane-paste', { detail: { paneId: activeId, text: '' } }));
+      return;
+    }
+
     const liveTyping = configContext.get().input.live_typing;
     if (!liveTyping) return; // buffered mode: text sits in field and is sent on Enter
-
-    const text = e.clipboardData?.getData('text') ?? '';
-    if (!text) return;
 
     if (!this.liveTypingMirrorSynced) e.preventDefault();
     await this.sendKeyToPTY(text);

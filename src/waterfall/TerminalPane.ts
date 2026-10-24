@@ -446,6 +446,10 @@ export class TerminalPane {
     this.term.scrollToTop();
   }
 
+  paste(text: string) {
+    this.term.paste(text);
+  }
+
   scrollToBottom() {
     this.term.scrollToBottom();
   }
