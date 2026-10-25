@@ -32,6 +32,8 @@ jobs:
   publish-tauri:
     name: Publish (${{ matrix.bundle }})
     runs-on: ${{ matrix.platform }}
+    # Its secrets live only in this environment, which waits for the owner's approval.
+    environment: release
     strategy:
       fail-fast: false
       matrix:
@@ -56,16 +58,16 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 20
           cache: npm
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: ${{ startsWith(matrix.platform, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
@@ -93,7 +95,7 @@ jobs:
           "
 
       - name: Build and publish Tauri bundle
-        uses: tauri-apps/tauri-action@v1.0.0
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # macOS code signing and notarization
@@ -116,6 +118,8 @@ jobs:
     name: Update Homebrew tap
     needs: publish-tauri
     runs-on: ubuntu-latest
+    # Its secrets live only in this environment, which waits for the owner's approval.
+    environment: release
     if: ${{ github.event_name == 'push' || !fromJSON(inputs.draft) }}
 
     env:

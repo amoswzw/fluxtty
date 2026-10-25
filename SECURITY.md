@@ -8,10 +8,8 @@ The project is still early, so the latest code on `main` and the current `0.1.x`
 
 Please do not open public GitHub issues for security problems.
 
-Instead:
-
-- If GitHub private vulnerability reporting is enabled for this repository, use that.
-- Otherwise, contact the maintainers privately through GitHub or any security contact published for the project.
+Instead, report it privately: on GitHub, open the **Security** tab of this repository and choose
+**Report a vulnerability**.
 
 Please include as much detail as you can:
 
