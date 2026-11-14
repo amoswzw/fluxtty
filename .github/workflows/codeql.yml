@@ -48,7 +48,7 @@ jobs:
           npx vite build
 
       - name: Analyze JS/TS
-        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
         with:
           category: /language:javascript-typescript
 
@@ -70,6 +70,6 @@ jobs:
         run: cargo check --manifest-path src-tauri/Cargo.toml
 
       - name: Analyze Rust
-        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
         with:
           category: /language:rust
